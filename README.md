@@ -66,3 +66,11 @@ The static site is served from the `docs/` folder on the `main` branch:
 
 All asset paths in `docs/index.html` are relative, so the game works when the
 site is served from the repository subpath.
+
+### Auto deploy
+
+A GitHub Action at `.github/workflows/deploy.yml` rebuilds the production
+bundles and updates `docs/` automatically on every push to `main`, so you only
+need to push your source changes. The manual copy steps above are only needed
+if you want to update the deployed site without pushing source code.
+
