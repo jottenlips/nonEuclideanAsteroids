@@ -90,7 +90,7 @@ const _prevN = new THREE.Vector3(0, 1, 0);
 const _stepQuat = new THREE.Quaternion();
 let _refInit = false;
 
-let mouseDown = false;
+let dragPointer = null;
 let lastMX = 0;
 let lastMY = 0;
 
@@ -219,6 +219,9 @@ let fx = [];
 let hudSurface = null;
 
 const keys = {};
+
+// Virtual joystick state: turn in [-1,1] (right positive), thrust in [0,1].
+const joy = { turn: 0, thrust: 0 };
 
 let lastMs = 0;
 let hudTimer = 0;
@@ -859,16 +862,23 @@ function update(dt) {
   const shipAlive = G.respawnTimer <= 0;
 
   if (shipAlive) {
-    const left = !!(keys.ArrowLeft || keys.a);
-    const right = !!(keys.ArrowRight || keys.d);
-    const up = !!(keys.ArrowUp || keys.w);
+    const kbLeft = !!(keys.ArrowLeft || keys.a);
+    const kbRight = !!(keys.ArrowRight || keys.d);
+    const kbUp = !!(keys.ArrowUp || keys.w);
+    const jT = joy.turn;
+    const jU = joy.thrust;
+    const left = kbLeft || jT < -0.12;
+    const right = kbRight || jT > 0.12;
+    const up = kbUp || jU > 0.12;
 
     if (left) {
-      G.heading -= TURN_RATE * dt;
-      G.targetBank = -0.5;
+      const amt = kbLeft ? 1 : Math.min(1, -jT);
+      G.heading -= TURN_RATE * amt * dt;
+      G.targetBank = -0.5 * amt;
     } else if (right) {
-      G.heading += TURN_RATE * dt;
-      G.targetBank = 0.5;
+      const amt = kbRight ? 1 : Math.min(1, jT);
+      G.heading += TURN_RATE * amt * dt;
+      G.targetBank = 0.5 * amt;
     } else {
       G.targetBank = 0;
     }
@@ -876,8 +886,9 @@ function update(dt) {
     G.bank += (G.targetBank - G.bank) * Math.min(1, dt * 7);
 
     if (up) {
-      G.vTheta += Math.sin(G.heading) * ACCEL * dt;
-      G.vPhi += Math.cos(G.heading) * ACCEL * dt;
+      const amt = kbUp ? 1 : Math.min(1, jU);
+      G.vTheta += Math.sin(G.heading) * ACCEL * amt * dt;
+      G.vPhi += Math.cos(G.heading) * ACCEL * amt * dt;
     }
     const spd = Math.hypot(G.vTheta, G.vPhi);
     if (spd > MAX_VEL) {
@@ -1033,15 +1044,24 @@ function onBlur() {
   }
 }
 
-function onMouseDown(e) {
+function onPointerDown(e) {
   Audio.unlock();
-  mouseDown = true;
+  if (e.pointerType === 'touch') {
+    e.preventDefault();
+  }
+  if (dragPointer !== null) {
+    return;
+  }
+  if (e.target && e.target.closest && e.target.closest('#r360-touch-controls')) {
+    return;
+  }
+  dragPointer = e.pointerId;
   lastMX = e.clientX;
   lastMY = e.clientY;
 }
 
-function onMouseMove(e) {
-  if (!mouseDown) {
+function onPointerMove(e) {
+  if (dragPointer !== e.pointerId) {
     return;
   }
   const dx = e.clientX - lastMX;
@@ -1052,8 +1072,151 @@ function onMouseMove(e) {
   VIEW.tPitch = Math.max(0.05, Math.min(1.35, VIEW.tPitch - dy * 0.008));
 }
 
-function onMouseUp() {
-  mouseDown = false;
+function onPointerUp(e) {
+  if (dragPointer === e.pointerId) {
+    dragPointer = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Touch controls (joystick + fire button)
+// ---------------------------------------------------------------------------
+
+function buildTouchControls() {
+  const isTouch =
+    ('ontouchstart' in window) ||
+    (window.matchMedia && matchMedia('(pointer: coarse)').matches);
+  if (!isTouch) {
+    return;
+  }
+
+  const JOY_SIZE = 148;
+  const R = 56;
+  const KS = 64;
+  const knobOff = (JOY_SIZE - KS) / 2;
+
+  const wrap = document.createElement('div');
+  wrap.id = 'r360-touch-controls';
+  wrap.style.cssText = 'position:fixed;inset:0;z-index:100;pointer-events:none;';
+
+  const joyBase = document.createElement('div');
+  joyBase.style.cssText =
+    'position:absolute;left:22px;bottom:22px;width:' + JOY_SIZE +
+    'px;height:' + JOY_SIZE + 'px;border-radius:50%;' +
+    'background:rgba(255,255,255,0.07);border:2px solid rgba(255,255,255,0.22);' +
+    'pointer-events:auto;touch-action:none;-webkit-user-select:none;' +
+    'user-select:none;-webkit-touch-callout:none;';
+
+  const knob = document.createElement('div');
+  knob.style.cssText =
+    'position:absolute;left:' + knobOff + 'px;top:' + knobOff +
+    'px;width:' + KS + 'px;height:' + KS + 'px;border-radius:50%;' +
+    'background:rgba(255,255,255,0.32);border:2px solid rgba(255,255,255,0.5);';
+  joyBase.appendChild(knob);
+
+  const fireBtn = document.createElement('div');
+  fireBtn.innerText = 'FIRE';
+  fireBtn.style.cssText =
+    'position:absolute;right:22px;bottom:22px;width:112px;height:112px;' +
+    'border-radius:50%;background:rgba(220,30,30,0.30);' +
+    'border:3px solid rgba(255,70,70,0.75);color:#fff;' +
+    'font-weight:700;font-size:18px;letter-spacing:2px;' +
+    'display:flex;align-items:center;justify-content:center;' +
+    'pointer-events:auto;touch-action:none;-webkit-user-select:none;' +
+    'user-select:none;-webkit-touch-callout:none;' +
+    '-webkit-tap-highlight-color:transparent;';
+
+  wrap.appendChild(joyBase);
+  wrap.appendChild(fireBtn);
+  document.body.appendChild(wrap);
+
+  let joyPointer = null;
+
+  function setKnob(clientX, clientY) {
+    const rect = joyBase.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    let dx = clientX - cx;
+    let dy = clientY - cy;
+    const dist = Math.hypot(dx, dy);
+    if (dist > R) {
+      dx *= R / dist;
+      dy *= R / dist;
+    }
+    knob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    joy.turn = Math.abs(dx) / R;
+    joy.thrust = Math.max(0, -dy) / R;
+    if (dx < 0) {
+      joy.turn = -joy.turn;
+    }
+    if (joy.turn === 0 && joy.thrust === 0) {
+      keys.ArrowLeft = false;
+      keys.ArrowRight = false;
+      keys.ArrowUp = false;
+    }
+  }
+
+  function joyMove(e) {
+    if (e.pointerId !== joyPointer) {
+      return;
+    }
+    setKnob(e.clientX, e.clientY);
+  }
+
+  joyBase.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    Audio.unlock();
+    joyPointer = e.pointerId;
+    try {
+      joyBase.setPointerCapture(e.pointerId);
+    } catch (err) {}
+    setKnob(e.clientX, e.clientY);
+  });
+  joyBase.addEventListener('pointermove', joyMove);
+  joyBase.addEventListener('pointercancel', joyEnd);
+  joyBase.addEventListener('lostpointercapture', joyEnd);
+
+  function joyEnd(e) {
+    if (e.pointerId !== joyPointer) {
+      return;
+    }
+    joyPointer = null;
+    joy.turn = 0;
+    joy.thrust = 0;
+    keys.ArrowLeft = false;
+    keys.ArrowRight = false;
+    keys.ArrowUp = false;
+    knob.style.transform = 'translate(0px,0px)';
+  }
+
+  joyBase.addEventListener('pointerup', joyEnd);
+
+  let firePointer = null;
+
+  function fireStart(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    Audio.unlock();
+    firePointer = e.pointerId;
+    try {
+      fireBtn.setPointerCapture(e.pointerId);
+    } catch (err) {}
+    keys[' '] = true;
+  }
+
+  function fireEnd(e) {
+    if (e.pointerId !== firePointer) {
+      return;
+    }
+    firePointer = null;
+    keys[' '] = false;
+  }
+
+  fireBtn.addEventListener('pointerdown', fireStart);
+  fireBtn.addEventListener('pointerup', fireEnd);
+  fireBtn.addEventListener('pointercancel', fireEnd);
+  fireBtn.addEventListener('lostpointercapture', fireEnd);
 }
 
 // ---------------------------------------------------------------------------
@@ -1082,10 +1245,12 @@ function init(bundle, parent, options = {}) {
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onBlur);
-  window.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mouseup', onMouseUp);
-  window.addEventListener('mouseleave', onMouseUp);
+  window.addEventListener('pointerdown', onPointerDown);
+  window.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+  window.addEventListener('pointercancel', onPointerUp);
+
+  buildTouchControls();
 
   resetGame();
   r360.start();
