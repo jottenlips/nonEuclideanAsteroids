@@ -1,0 +1,38 @@
+<html>
+  <head>
+    <title>SPHERE ASTEROIDS — React VR</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+        font-family: monospace;
+      }
+    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <link rel="icon" href="data:,">
+  </head>
+  <body>
+    <!-- Attachment point for your app -->
+    <div id="container"></div>
+    <script>
+      // Load bundles with a cache-busting query so refreshed pages always get
+      // the latest code (Metro dev server sends no Cache-Control header).
+      (function () {
+        var v = '&v=' + Date.now();
+        var s = document.createElement('script');
+        s.src = './client.bundle?platform=vr' + v;
+        document.head.appendChild(s);
+        s.onload = function () {
+          React360.init(
+            'index.bundle?platform=vr&dev=true' + v,
+            document.getElementById('container'),
+            {
+              assetRoot: 'static_assets/',
+            }
+          );
+        };
+      })();
+    </script>
+  </body>
+</html>
