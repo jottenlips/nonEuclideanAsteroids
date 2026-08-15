@@ -20,6 +20,20 @@ SW magenta). Asteroids change color to match the quadrant they are currently in.
 Mouse: click and drag to orbit the camera around the ship. The camera hovers
 above the ship and keeps it centered in view.
 
+## Mobile controls
+
+On touch devices (phones and tablets) an on-screen joystick and fire button
+appear:
+
+| Control | Action |
+| --- | --- |
+| Left joystick (drag up) | Thrust |
+| Left joystick (drag sideways) | Turn |
+| Red FIRE button (hold) | Fire |
+| Drag anywhere else | Orbit the camera around the ship |
+
+Turn and thrust respond proportionally to how far you push the joystick.
+
 ## Run locally
 
 Requires Node 20 (the packager needs the OpenSSL legacy provider).
