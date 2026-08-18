@@ -15,7 +15,7 @@ SW magenta). Asteroids change color to match the quadrant they are currently in.
 | Arrow Right / D | Turn right |
 | Arrow Up / W | Thrust |
 | Space | Fire |
-| T | Toggle arena shape (sphere / torus / teapot) |
+| T | Toggle arena shape (plane / sphere / torus / pseudosphere / ellipsoid) |
 | R | Restart (after game over) |
 
 Mouse: click and drag to orbit the camera around the ship. The camera hovers
@@ -27,9 +27,11 @@ Each wave uses a different surface shape. The shape auto-cycles in order:
 
 | Shape | Surface | Seam behavior |
 | --- | --- | --- |
+| PLANE | Flat plane | Wraps both axes (toroidal topology) |
 | SPHERE | Closed sphere | Crosses the equator, flips direction |
 | TORUS | Closed torus | Wraps both axes independently |
-| TEAPOT | Sphere with lid, spout, and handle bumps | Same as sphere (pole wrap) |
+| PSEUDO | Pseudosphere (tractrix revolution) | Wraps rim ↔ narrow end |
+| ELLIPSOID | Triaxial ellipsoid | Same as sphere (pole wrap) |
 
 Press **T** (or the shape label in the top bar) to toggle shapes mid-wave.
 

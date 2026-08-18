@@ -105,7 +105,7 @@ async function testGameInitNoErrors(errors) {
   });
   assert(hasUiControls, '#r360-ui-controls exists in DOM');
 
-  // Shape label should be SPHERE at start
+  // Shape label should be SPHERE at start (first in cycle)
   const label = await getShapeLabel();
   assert(label === 'SPHERE', 'Initial shape label is SPHERE (got: ' + label + ')');
 
@@ -117,7 +117,7 @@ async function testGameInitNoErrors(errors) {
     (criticalErrors.length > 0 ? ' (got: ' + criticalErrors.join('; ') + ')' : ''));
 }
 
-async function testToggleTorus(errors) {
+async function testToggleSphere(errors) {
   console.log('\n[2] Press T -> TORUS');
   const errorsBefore = errors.length;
   await pressKey('t');
@@ -130,21 +130,47 @@ async function testToggleTorus(errors) {
     (newErrors.length > 0 ? ' (got: ' + newErrors.join('; ') + ')' : ''));
 }
 
-async function testToggleTeapot(errors) {
-  console.log('\n[3] Press T -> TEAPOT');
+async function testToggleTorus(errors) {
+  console.log('\n[3] Press T -> PSEUDO');
   const errorsBefore = errors.length;
   await pressKey('t');
 
   const label = await getShapeLabel();
-  assert(label === 'TEAPOT', 'Shape label shows TEAPOT (got: ' + label + ')');
+  assert(label === 'PSEUDO', 'Shape label shows PSEUDO (got: ' + label + ')');
 
   const newErrors = errors.slice(errorsBefore);
-  assert(newErrors.length === 0, 'No errors during TEAPOT toggle' +
+  assert(newErrors.length === 0, 'No errors during PSEUDO toggle' +
     (newErrors.length > 0 ? ' (got: ' + newErrors.join('; ') + ')' : ''));
 }
 
-async function testToggleWrapsToSphere(errors) {
-  console.log('\n[4] Press T -> wraps to SPHERE');
+async function testTogglePseudo(errors) {
+  console.log('\n[4] Press T -> ELLIPSOID');
+  const errorsBefore = errors.length;
+  await pressKey('t');
+
+  const label = await getShapeLabel();
+  assert(label === 'ELLIPSOID', 'Shape label shows ELLIPSOID (got: ' + label + ')');
+
+  const newErrors = errors.slice(errorsBefore);
+  assert(newErrors.length === 0, 'No errors during ELLIPSOID toggle' +
+    (newErrors.length > 0 ? ' (got: ' + newErrors.join('; ') + ')' : ''));
+}
+
+async function testToggleEllipsoid(errors) {
+  console.log('\n[5] Press T -> PLANE');
+  const errorsBefore = errors.length;
+  await pressKey('t');
+
+  const label = await getShapeLabel();
+  assert(label === 'PLANE', 'Shape label shows PLANE (got: ' + label + ')');
+
+  const newErrors = errors.slice(errorsBefore);
+  assert(newErrors.length === 0, 'No errors during PLANE toggle' +
+    (newErrors.length > 0 ? ' (got: ' + newErrors.join('; ') + ')' : ''));
+}
+
+async function testToggleWrapsToPlane(errors) {
+  console.log('\n[6] Press T -> wraps to SPHERE');
   const errorsBefore = errors.length;
   await pressKey('t');
 
@@ -191,7 +217,7 @@ async function testToggleMidPlay(errors) {
   const errorsBefore = errors.length;
 
   // Rapid toggle through all shapes twice
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 10; i++) {
     await pressKey('t');
   }
 
@@ -267,9 +293,11 @@ async function run() {
 
   try {
     await testGameInitNoErrors(errors);
+    await testToggleSphere(errors);
     await testToggleTorus(errors);
-    await testToggleTeapot(errors);
-    await testToggleWrapsToSphere(errors);
+    await testTogglePseudo(errors);
+    await testToggleEllipsoid(errors);
+    await testToggleWrapsToPlane(errors);
     await testKeyboardThrustAndFire(errors);
     await testToggleMidPlay(errors);
     await testRestart(errors);

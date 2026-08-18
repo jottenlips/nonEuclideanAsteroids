@@ -2,7 +2,7 @@
  * 3D Asteroids for React VR (React 360)
  *
  * Game engine lives on the browser main thread (client.js). The arena is a
- * wireframe surface that changes shape each level (sphere, torus, teapot).
+ * wireframe surface that changes shape each level (plane, sphere, torus, pseudosphere, ellipsoid).
  * The player ship, asteroids and bullets slide across the surface using a
  * shared 2-coordinate (a, b) system. Crossing seams and poles wraps bodies
  * continuously.
@@ -40,28 +40,37 @@ const MIN_SPAWN_DIST = 33;         // min world-unit distance from ship
 const HUD_SYNC_INTERVAL = 0.12;    // s
 const CAM_HOVER = 1.6 * RADIUS;    // camera height above surface
 
+// Power-ups
+const POWERUP_TYPES = [
+  {name: 'TRIPLE',  emoji: '🚀', color: '#5eff5e', duration: 8},
+  {name: 'SPEED',   emoji: '⚡', color: '#ffe45e', duration: 6},
+  {name: 'FIREWORK',emoji: '💥', color: '#ff6e5e', duration: 0},   // single-shot, no timer
+  {name: 'SHIELD',  emoji: '🛡️', color: '#5e9eff', duration: 0},   // single-use
+];
+const POWERUP_SPAWN_INTERVAL = 6;   // s between spawn attempts
+const POWERUP_LIFETIME = 12;        // s before despawn
+const POWERUP_PICKUP_DIST = 5;      // world units
+
 // ---------------------------------------------------------------------------
 // Arena shape registry
 // ---------------------------------------------------------------------------
 
 const TORUS_MAJOR = 100;
 const TORUS_MINOR = 60;
-
-// Smooth C1 bump: peaks at d=0, zero at d>=width, C1 at edges.
-function _bump(d, width, height) {
-  if (d >= width) {
-    return 0;
-  }
-  const t = d / width;
-  const c = Math.cos(t * PI_HALF);
-  return height * c * c;
-}
+const PSEUDO_UMAX = 1.8;
+const ELLIP_RX = 55;
+const ELLIP_RY = 35;
+const ELLIP_RZ = 45;
+const PLANE_HALF = 70;
+const SADDLE_K = 0.012;
 
 const SHAPES = [
   // --- Sphere ---
   {
     name: 'SPHERE',
+    uHalf: PI,
     vHalf: PI_HALF,
+    speed: 1,
     point(a, b, out) {
       const cb = Math.cos(b);
       out.set(RADIUS * cb * Math.cos(a), RADIUS * Math.sin(b), RADIUS * cb * Math.sin(a));
@@ -97,7 +106,9 @@ const SHAPES = [
   // --- Torus ---
   {
     name: 'TORUS',
+    uHalf: PI,
     vHalf: PI,
+    speed: 1,
     point(a, b, out) {
       const R = TORUS_MAJOR + TORUS_MINOR * Math.cos(b);
       out.set(R * Math.cos(a), R * Math.sin(a), TORUS_MINOR * Math.sin(b));
@@ -120,28 +131,87 @@ const SHAPES = [
       else if (body.phi < -PI) { body.phi += TWO_PI; }
     },
   },
-  // --- Teapot (sphere perturbation with spout + handle bumps) ---
+  // --- Pseudosphere (tractrix revolution, constant negative curvature) ---
   {
-    name: 'TEAPOT',
-    vHalf: PI_HALF,
+    name: 'PSEUDO',
+    uHalf: PI,
+    vHalf: PSEUDO_UMAX,
+    speed: 1,
     point(a, b, out) {
-      const cb = Math.cos(b);
-      const sb = Math.sin(b);
-      // Oblate body + flat bottom
-      let d = -3.5 * Math.cos(2 * b);
-      // Spout bump (east, upper half)
-      d += _bump(Math.hypot(wrapAngle(a - 0.4), b - 0.45), 0.55, 16);
-      // Handle bump (west, mid height)
-      d += _bump(Math.hypot(wrapAngle(a - PI), b - 0.25), 0.5, 11);
-      // Lid bulge (top)
-      d += _bump(Math.hypot(a > PI ? a - TWO_PI : a, b - 1.15), 0.45, 6);
-      const r = RADIUS + d;
-      out.set(r * cb * Math.cos(a), r * sb, r * cb * Math.sin(a));
+      const c = RADIUS / Math.cosh(b);
+      out.set(c * Math.cos(a), c * Math.sin(a), RADIUS * (b - Math.tanh(b)));
       return out;
     },
-    tangent: null,  // finite differences
+    tangent: null,
     wrap(body) {
-      SHAPES[0].wrap(body);
+      if (body.theta > PI) { body.theta -= TWO_PI; }
+      else if (body.theta < -PI) { body.theta += TWO_PI; }
+      if (body.phi > PSEUDO_UMAX) {
+        body.phi = 0;
+      } else if (body.phi < 0) {
+        body.phi = PSEUDO_UMAX;
+      }
+    },
+  },
+  // --- Ellipsoid (triaxial, non-uniform positive curvature) ---
+  {
+    name: 'ELLIPSOID',
+    uHalf: PI,
+    vHalf: PI_HALF,
+    speed: 1,
+    point(a, b, out) {
+      const cb = Math.cos(b);
+      out.set(ELLIP_RX * cb * Math.cos(a), ELLIP_RY * Math.sin(b), ELLIP_RZ * cb * Math.sin(a));
+      return out;
+    },
+    tangent(a, b) {
+      const ct = Math.cos(a);
+      const st = Math.sin(a);
+      const cb = Math.cos(b);
+      const sb = Math.sin(b);
+      _n.set(cb * ct / ELLIP_RX, sb / ELLIP_RY, cb * st / ELLIP_RZ).normalize();
+      _tmp.set(-st, 0, ct);
+      _eP.crossVectors(_n, _tmp).normalize();
+      _eT.crossVectors(_eP, _n).normalize();
+    },
+    wrap(body) {
+      if (body.theta > PI) { body.theta -= TWO_PI; }
+      else if (body.theta < -PI) { body.theta += TWO_PI; }
+      if (body.phi > PI_HALF) {
+        body.phi = PI - body.phi;
+        body.theta = wrapAngle(body.theta + PI);
+        body.vTheta = -body.vTheta;
+        body.vPhi = -body.vPhi;
+        if (body.heading !== undefined) { body.heading = wrapAngle(body.heading + PI); }
+      } else if (body.phi < -PI_HALF) {
+        body.phi = -PI - body.phi;
+        body.theta = wrapAngle(body.theta + PI);
+        body.vTheta = -body.vTheta;
+        body.vPhi = -body.vPhi;
+        if (body.heading !== undefined) { body.heading = wrapAngle(body.heading + PI); }
+      }
+    },
+  },
+  // --- Saddle plane (hyperbolic paraboloid, negative curvature, toroidal wrap) ---
+  {
+    name: 'PLANE',
+    uHalf: PLANE_HALF,
+    vHalf: PLANE_HALF,
+    speed: 22,
+    point(a, b, out) {
+      out.set(a, SADDLE_K * (a * a - b * b), b);
+      return out;
+    },
+    tangent(a, b) {
+      _eT.set(1, 2 * SADDLE_K * a, 0).normalize();
+      _eP.set(0, -2 * SADDLE_K * b, 1).normalize();
+      _n.crossVectors(_eP, _eT).normalize();
+    },
+    wrap(body) {
+      if (body.theta > PLANE_HALF) { body.theta -= 2 * PLANE_HALF; }
+      else if (body.theta < -PLANE_HALF) { body.theta += 2 * PLANE_HALF; }
+      if (body.phi > PLANE_HALF) { body.phi -= 2 * PLANE_HALF; }
+      else if (body.phi < -PLANE_HALF) { body.phi += 2 * PLANE_HALF; }
     },
   },
 ];
@@ -261,6 +331,7 @@ const Audio = (() => {
     explode() { ensure(); noise(0.3, 0.28); tone(170, 38, 0.35, 'sawtooth', 0.18); },
     die() { ensure(); noise(0.6, 0.4); tone(140, 28, 0.6, 'sawtooth', 0.28); },
     wave() { ensure(); tone(440, 440, 0.08, 'square', 0.09); tone(660, 660, 0.09, 'square', 0.09, 0.1); tone(880, 880, 0.12, 'square', 0.09, 0.2); },
+    powerup() { ensure(); tone(600, 1200, 0.08, 'sine', 0.15); tone(800, 1600, 0.06, 'sine', 0.12, 0.08); },
   };
 })();
 
@@ -286,6 +357,12 @@ const G = {
   startTimer: 1.3,
   msg: 'READY',
   msgTimer: 0,
+  // Power-up active timers
+  tripleTimer: 0,
+  speedTimer: 0,
+  shieldHits: 0,
+  fireworkNext: false,
+  powerupCd: POWERUP_SPAWN_INTERVAL,
 };
 
 let r360 = null;
@@ -295,6 +372,7 @@ let engineMesh = null;
 let bullets = [];
 let asteroids = [];
 let fx = [];
+let powerups = [];
 
 const keys = {};
 
@@ -403,12 +481,13 @@ function buildArenaGrid() {
 
   const uCount = 16;
   const vCount = 8;
+  const uHalf = SHAPE.uHalf;
   const vMin = -SHAPE.vHalf;
   const vMax = SHAPE.vHalf;
 
-  // Constant-a lines (meridians / tube circles)
+  // Constant-a lines
   for (let i = 0; i < uCount; i++) {
-    const u = (i / uCount) * TWO_PI;
+    const u = -uHalf + (2 * uHalf * i) / uCount;
     const pts = [];
     for (let k = 0; k <= 64; k++) {
       const v = vMin + ((vMax - vMin) * k) / 64;
@@ -417,12 +496,12 @@ function buildArenaGrid() {
     grid.add(new THREE.LineLoop(pointsToGeo(pts), i === 0 ? matPrime : matDim));
   }
 
-  // Constant-b lines (parallels / major rings)
+  // Constant-b lines
   for (let i = 1; i < vCount; i++) {
     const v = vMin + ((vMax - vMin) * i) / vCount;
     const pts = [];
     for (let k = 0; k <= 64; k++) {
-      const u = (k / 64) * TWO_PI;
+      const u = -uHalf + (2 * uHalf * k) / 64;
       pts.push(SHAPE.point(u, v, new THREE.Vector3()));
     }
     grid.add(new THREE.LineLoop(pointsToGeo(pts), matDim));
@@ -431,7 +510,7 @@ function buildArenaGrid() {
   // Equator
   const eq = [];
   for (let k = 0; k <= 64; k++) {
-    eq.push(SHAPE.point((k / 64) * TWO_PI, 0, new THREE.Vector3()));
+    eq.push(SHAPE.point(-uHalf + (2 * uHalf * k) / 64, 0, new THREE.Vector3()));
   }
   grid.add(new THREE.LineLoop(pointsToGeo(eq), matEq));
 
@@ -443,7 +522,7 @@ const QUADRANT_COLORS = [0x3ad6ff, 0x3dffa5, 0xff9d3d, 0xc14dff];
 
 function quadrantColor(a, b) {
   const north = b >= 0;
-  const east = Math.cos(a) >= 0;
+  const east = SHAPE.uHalf === PLANE_HALF ? a >= 0 : Math.cos(a) >= 0;
   if (north) { return east ? QUADRANT_COLORS[0] : QUADRANT_COLORS[1]; }
   return east ? QUADRANT_COLORS[2] : QUADRANT_COLORS[3];
 }
@@ -485,12 +564,12 @@ function buildQuadrantMesh(u0, u1, v0, v1, color) {
 
 function buildQuadrants() {
   const group = new THREE.Group();
-  const h = PI_HALF;
+  const h = SHAPE.uHalf;
   const vh = SHAPE.vHalf;
-  group.add(buildQuadrantMesh(-h, h, 0, vh, QUADRANT_COLORS[0]));
-  group.add(buildQuadrantMesh(h, 3 * h, 0, vh, QUADRANT_COLORS[1]));
-  group.add(buildQuadrantMesh(-h, h, -vh, 0, QUADRANT_COLORS[2]));
-  group.add(buildQuadrantMesh(h, 3 * h, -vh, 0, QUADRANT_COLORS[3]));
+  group.add(buildQuadrantMesh(-h, 0, 0, vh, QUADRANT_COLORS[0]));
+  group.add(buildQuadrantMesh(0, h, 0, vh, QUADRANT_COLORS[1]));
+  group.add(buildQuadrantMesh(-h, 0, -vh, 0, QUADRANT_COLORS[2]));
+  group.add(buildQuadrantMesh(0, h, -vh, 0, QUADRANT_COLORS[3]));
   return group;
 }
 
@@ -596,6 +675,8 @@ function resetGame() {
   asteroids = [];
   for (const f of fx) { scene.remove(f.mesh); }
   fx = [];
+  for (const p of powerups) { scene.remove(p.mesh); }
+  powerups = [];
 
   shapeIdx = 0;
   SHAPE = SHAPES[0];
@@ -622,6 +703,7 @@ function resetGame() {
   if (quadrantGroup) { scene.remove(quadrantGroup); }
   rebuildArena();
   updateToggleLabel();
+  updateHudOverlay();
 }
 
 function respawnShip() {
@@ -698,16 +780,24 @@ function removeAsteroid(a) {
 
 function fireBullet() {
   Audio.shoot();
-  const b = {
-    theta: G.theta + Math.sin(G.heading) * 0.05,
-    phi: G.phi + Math.cos(G.heading) * 0.05,
-    heading: G.heading,
-    life: BULLET_LIFE,
-    mesh: new THREE.LineSegments(bulletWire, bulletMat),
-  };
-  bullets.push(b);
-  scene.add(b.mesh);
-  placeOriented(b.mesh, b);
+  const offsets = G.tripleTimer > 0 ? [-0.35, 0, 0.35] : [0];
+  const isFirework = G.fireworkNext;
+  if (G.fireworkNext) { G.fireworkNext = false; }
+  for (const off of offsets) {
+    const b = {
+      theta: G.theta + Math.sin(G.heading) * 0.05,
+      phi: G.phi + Math.cos(G.heading) * 0.05,
+      heading: G.heading + off,
+      life: BULLET_LIFE,
+      mesh: new THREE.LineSegments(bulletWire, isFirework
+        ? new THREE.LineBasicMaterial({color: 0xff5e5e, transparent: true, opacity: 1})
+        : bulletMat),
+      firework: isFirework,
+    };
+    bullets.push(b);
+    scene.add(b.mesh);
+    placeOriented(b.mesh, b);
+  }
 }
 
 function spawnRing(theta, phi, color, opts) {
@@ -726,6 +816,25 @@ function hitAsteroid(bullet, asteroid) {
   Audio.explode();
   spawnRing(asteroid.theta, asteroid.phi, 0x9ff2ff, {life: 0.35, grow: 26});
 
+  if (bullet.firework) {
+    for (let i = 0; i < 8; i++) {
+      const h = bullet.heading + (i / 8) * TWO_PI;
+      const fb = {
+        theta: asteroid.theta + Math.sin(h) * 0.05,
+        phi: asteroid.phi + Math.cos(h) * 0.05,
+        heading: h,
+        life: BULLET_LIFE * 0.6,
+        mesh: new THREE.LineSegments(bulletWire,
+          new THREE.LineBasicMaterial({color: 0xff5e5e, transparent: true, opacity: 1})),
+        firework: false,
+      };
+      bullets.push(fb);
+      scene.add(fb.mesh);
+      placeOriented(fb.mesh, fb);
+    }
+    spawnRing(asteroid.theta, asteroid.phi, 0xff5e5e, {life: 0.5, grow: 30});
+  }
+
   const tier = asteroid.tier + 1;
   if (tier < SIZES.length) {
     const ba = bullet.heading;
@@ -743,12 +852,31 @@ function hitAsteroid(bullet, asteroid) {
 
   if (asteroids.length === 0 && G.status === 'playing') {
     setMsg('WAVE CLEAR', 1.2);
-    G.startTimer = 1.3;
+  G.startTimer = 1.3;
+  G.tripleTimer = 0;
+  G.speedTimer = 0;
+  G.shieldHits = 0;
+  G.fireworkNext = false;
+  G.powerupCd = POWERUP_SPAWN_INTERVAL;
   }
 }
 
-function killShip() {
+function killShip(hitAsteroid) {
   if (G.invuln > 0) { return; }
+    if (G.shieldHits > 0) {
+    G.shieldHits--;
+    Audio.explode();
+    spawnRing(G.theta, G.phi, 0x5e9eff, {life: 0.5, grow: 30});
+    if (hitAsteroid) {
+      spawnRing(hitAsteroid.theta, hitAsteroid.phi, 0x5e9eff, {life: 0.4, grow: 22});
+      removeAsteroid(hitAsteroid);
+      if (asteroids.length === 0 && G.status === 'playing') {
+        setMsg('WAVE CLEAR', 1.2);
+        G.startTimer = 1.3;
+      }
+    }
+    return;
+  }
   Audio.die();
   spawnRing(G.theta, G.phi, 0xff6b6b, {life: 0.6, grow: 34});
   shipMesh.visible = false;
@@ -776,12 +904,87 @@ function updateFx(dt) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Power-ups
+// ---------------------------------------------------------------------------
+
+function makePowerupSprite(type) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  ctx.font = '80px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(type.emoji, 64, 64);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({map: tex, transparent: true, opacity: 0.92});
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(6, 6, 1);
+  return sprite;
+}
+
+function spawnPowerup() {
+  const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+  let theta = 0;
+  let phi = 0;
+  for (let tries = 0; tries < 40; tries++) {
+    theta = (Math.random() * 2 - 1) * SHAPE.uHalf;
+    phi = (Math.random() * 2 - 1) * SHAPE.vHalf;
+    if (spawnDistOK(theta, phi)) { break; }
+  }
+  const mesh = makePowerupSprite(type);
+  surfacePoint(theta, phi, _pos);
+  mesh.position.copy(_pos);
+  scene.add(mesh);
+  powerups.push({type, theta, phi, life: POWERUP_LIFETIME, mesh});
+}
+
+function updatePowerups(dt) {
+  G.powerupCd -= dt;
+  if (G.powerupCd <= 0 && G.status === 'playing') {
+    G.powerupCd = POWERUP_SPAWN_INTERVAL + Math.random() * 3;
+    spawnPowerup();
+  }
+
+  for (let i = powerups.length - 1; i >= 0; i--) {
+    const p = powerups[i];
+    p.life -= dt;
+    p.mesh.material.opacity = 0.55 + 0.37 * Math.sin(p.life * 3);
+    if (p.life <= 0) {
+      scene.remove(p.mesh);
+      powerups.splice(i, 1);
+      continue;
+    }
+    // Pickup check
+    surfacePoint(G.theta, G.phi, _tmp);
+    surfacePoint(p.theta, p.phi, _tmp2);
+    if (_tmp.distanceTo(_tmp2) < POWERUP_PICKUP_DIST) {
+      Audio.powerup();
+      applyPowerup(p.type);
+      spawnRing(p.theta, p.phi, 0x5eff5e, {life: 0.4, grow: 14});
+      scene.remove(p.mesh);
+      powerups.splice(i, 1);
+    }
+  }
+}
+
+function applyPowerup(type) {
+  switch (type.name) {
+    case 'TRIPLE':  G.tripleTimer = type.duration; break;
+    case 'SPEED':   G.speedTimer = type.duration; break;
+    case 'FIREWORK': G.fireworkNext = true; break;
+    case 'SHIELD':  G.shieldHits += 1; break;
+  }
+  updateHudOverlay();
+}
+
 function updateBullets(dt) {
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
     b.life -= dt;
-    b.theta += Math.sin(b.heading) * BULLET_SPEED * dt;
-    b.phi += Math.cos(b.heading) * BULLET_SPEED * dt;
+    b.theta += Math.sin(b.heading) * BULLET_SPEED * dt * SHAPE.speed;
+    b.phi += Math.cos(b.heading) * BULLET_SPEED * dt * SHAPE.speed;
     wrapBody(b);
     placeOriented(b.mesh, b);
     if (b.life <= 0) {
@@ -793,8 +996,8 @@ function updateBullets(dt) {
 
 function updateAsteroids(dt) {
   for (const a of asteroids) {
-    a.theta += a.vTheta * dt;
-    a.phi += a.vPhi * dt;
+    a.theta += a.vTheta * dt * SHAPE.speed;
+    a.phi += a.vPhi * dt * SHAPE.speed;
     wrapBody(a);
     a.mesh.material.color.setHex(quadrantColor(a.theta, a.phi));
     surfacePoint(a.theta, a.phi, _pos);
@@ -829,7 +1032,7 @@ function handleCollisions() {
       surfacePoint(a.theta, a.phi, _tmp2);
       const rr = a.radius + SHIP_RADIUS;
       if (_tmp.distanceToSquared(_tmp2) < rr * rr) {
-        killShip();
+        killShip(a);
         break;
       }
     }
@@ -861,6 +1064,8 @@ function update(dt) {
     if (G.respawnTimer <= 0) { respawnShip(); }
   }
   if (G.invuln > 0) { G.invuln -= dt; }
+  if (G.tripleTimer > 0) { G.tripleTimer -= dt; }
+  if (G.speedTimer > 0) { G.speedTimer -= dt; }
 
   const shipAlive = G.respawnTimer <= 0;
 
@@ -890,13 +1095,15 @@ function update(dt) {
 
     if (up) {
       const amt = kbUp ? 1 : Math.min(1, jU);
-      G.vTheta += Math.sin(G.heading) * ACCEL * amt * dt;
-      G.vPhi += Math.cos(G.heading) * ACCEL * amt * dt;
+      G.vTheta += Math.sin(G.heading) * ACCEL * amt * dt * SHAPE.speed;
+      G.vPhi += Math.cos(G.heading) * ACCEL * amt * dt * SHAPE.speed;
     }
     const spd = Math.hypot(G.vTheta, G.vPhi);
-    if (spd > MAX_VEL) {
-      G.vTheta *= MAX_VEL / spd;
-      G.vPhi *= MAX_VEL / spd;
+    const speedMul = G.speedTimer > 0 ? 1.8 : 1;
+    const maxV = MAX_VEL * SHAPE.speed * speedMul;
+    if (spd > maxV) {
+      G.vTheta *= maxV / spd;
+      G.vPhi *= maxV / spd;
     }
     const damp = Math.exp(-DRAG * dt);
     G.vTheta *= damp;
@@ -923,7 +1130,9 @@ function update(dt) {
   updateBullets(dt);
   updateAsteroids(dt);
   handleCollisions();
+  updatePowerups(dt);
   updateFx(dt);
+  updateHudOverlay();
 }
 
 // ---------------------------------------------------------------------------
@@ -1092,6 +1301,58 @@ function buildUiControls() {
 }
 
 // ---------------------------------------------------------------------------
+// DOM HUD overlay (score, lives, power-ups)
+// ---------------------------------------------------------------------------
+
+let hudEl = null;
+
+function buildHudOverlay() {
+  const el = document.createElement('div');
+  el.id = 'hud-overlay';
+  el.style.cssText =
+    'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:120;' +
+    'pointer-events:none;display:flex;gap:24px;align-items:center;' +
+    'font-family:monospace;color:#eaffff;font-size:18px;letter-spacing:1px;' +
+    'background:rgba(3,12,16,0.55);border:1px solid rgba(46,107,122,0.5);' +
+    'border-radius:10px;padding:6px 20px;';
+  el.innerHTML =
+    '<span id="hud-score">SCORE 000000</span>' +
+    '<span id="hud-lives">LIVES ▲▲▲</span>' +
+    '<span id="hud-powerups" style="font-size:16px;"></span>';
+  document.body.appendChild(el);
+  hudEl = el;
+}
+
+function updateHudOverlay() {
+  if (!hudEl) { return; }
+  const scoreEl = document.getElementById('hud-score');
+  const livesEl = document.getElementById('hud-lives');
+  const pupEl = document.getElementById('hud-powerups');
+  if (scoreEl) {
+    scoreEl.textContent = 'SCORE ' + String(G.score).padStart(6, '0');
+  }
+  if (livesEl) {
+    livesEl.textContent = 'LIVES ' + '▲'.repeat(Math.max(0, G.lives));
+  }
+  if (pupEl) {
+    const parts = [];
+    if (G.tripleTimer > 0) {
+      parts.push('🚀 ' + Math.ceil(G.tripleTimer) + 's');
+    }
+    if (G.speedTimer > 0) {
+      parts.push('⚡ ' + Math.ceil(G.speedTimer) + 's');
+    }
+    if (G.fireworkNext) {
+      parts.push('💥 READY');
+    }
+    if (G.shieldHits > 0) {
+      parts.push('🛡️ x' + G.shieldHits);
+    }
+    pupEl.textContent = parts.join('  ');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Touch controls (joystick + fire button)
 // ---------------------------------------------------------------------------
 
@@ -1242,6 +1503,7 @@ function init(bundle, parent, options = {}) {
   window.addEventListener('pointercancel', onPointerUp);
 
   buildUiControls();
+  buildHudOverlay();
   buildTouchControls();
 
   resetGame();
