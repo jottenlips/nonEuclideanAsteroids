@@ -19,6 +19,7 @@
     "babel-jest": "^19.0.0",
     "babel-preset-react-native": "^1.9.1",
     "jest": "^19.0.2",
+    "puppeteer-core": "^25.8.0",
     "react-test-renderer": "16.0.0",
     "xopen": "1.0.0"
   },
