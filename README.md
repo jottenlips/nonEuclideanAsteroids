@@ -1,8 +1,8 @@
 # Non-Euclidean Asteroids
 
 A 3D Asteroids game built with React 360 (React VR) and three.js. The arena is a
-wireframe sphere: the ship, asteroids, and bullets slide on the sphere surface
-and wrap around its seams and poles.
+wireframe surface that changes shape each level. The ship, asteroids, and bullets
+slide on the surface and wrap around its seams and poles.
 
 The sphere is divided into four colored quadrants (NE cyan, NW green, SE orange,
 SW magenta). Asteroids change color to match the quadrant they are currently in.
@@ -15,10 +15,25 @@ SW magenta). Asteroids change color to match the quadrant they are currently in.
 | Arrow Right / D | Turn right |
 | Arrow Up / W | Thrust |
 | Space | Fire |
+| T | Toggle arena shape (plane / sphere / torus / pseudosphere / ellipsoid) |
 | R | Restart (after game over) |
 
 Mouse: click and drag to orbit the camera around the ship. The camera hovers
 above the ship and keeps it centered in view.
+
+## Arena shapes
+
+Each wave uses a different surface shape. The shape auto-cycles in order:
+
+| Shape | Surface | Seam behavior |
+| --- | --- | --- |
+| PLANE | Flat plane | Wraps both axes (toroidal topology) |
+| SPHERE | Closed sphere | Crosses the equator, flips direction |
+| TORUS | Closed torus | Wraps both axes independently |
+| PSEUDO | Pseudosphere (tractrix revolution) | Wraps rim ↔ narrow end |
+| ELLIPSOID | Triaxial ellipsoid | Same as sphere (pole wrap) |
+
+Press **T** (or the shape label in the top bar) to toggle shapes mid-wave.
 
 ## Mobile controls
 
@@ -30,6 +45,7 @@ appear:
 | Left joystick (drag up) | Thrust |
 | Left joystick (drag sideways) | Turn |
 | Red FIRE button (hold) | Fire |
+| Shape label (top bar) | Toggle arena shape |
 | Drag anywhere else | Orbit the camera around the ship |
 
 Turn and thrust respond proportionally to how far you push the joystick.

@@ -177,7 +177,7 @@ class HUD extends React.Component {
       <View style={styles.panel}>
         <View style={styles.header}>
           <View>
-            <Text style={styles.title}>{'//SPHERE·ASTEROIDS'}</Text>
+            <Text style={styles.title}>{'//3D·ASTEROIDS'}</Text>
             <Text style={styles.subtitle}>{'REACT·VR · WIREFRAME'}</Text>
           </View>
           <View style={styles.stats}>
