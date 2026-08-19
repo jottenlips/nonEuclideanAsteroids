@@ -24,8 +24,8 @@ const TWO_PI = 2 * PI;
 const PI_HALF = PI / 2;
 
 const TURN_RATE = 2.8;             // rad/s
-const ACCEL = 0.52;                // heading-space acceleration (rad/s^2)
-const MAX_VEL = 0.5;               // max angular speed (rad/s)
+const ACCEL = 0.8;                 // heading-space acceleration (rad/s^2)
+const MAX_VEL = 0.7;               // max angular speed (rad/s)
 const DRAG = 0.16;                 // per second
 const BULLET_SPEED = 2.6;          // rad/s along the surface
 const BULLET_LIFE = 1.5;           // s
@@ -42,10 +42,12 @@ const CAM_HOVER = 1.6 * RADIUS;    // camera height above surface
 
 // Power-ups
 const POWERUP_TYPES = [
-  {name: 'TRIPLE',  emoji: '🚀', color: '#5eff5e', duration: 8},
-  {name: 'SPEED',   emoji: '⚡', color: '#ffe45e', duration: 6},
-  {name: 'FIREWORK',emoji: '💥', color: '#ff6e5e', duration: 0},   // single-shot, no timer
-  {name: 'SHIELD',  emoji: '🛡️', color: '#5e9eff', duration: 0},   // single-use
+  {name: 'LIFE',     emoji: '🚀', color: '#5eff5e'},
+  {name: 'TRIPLE',   emoji: '🔫', color: '#ff5e5e', duration: 20},
+  {name: 'SPEED',    emoji: '⚡', color: '#ffe45e', duration: 15},
+  {name: 'FIREWORK', emoji: '💥', color: '#ff6e5e'},
+  {name: 'SHIELD',   emoji: '🛡️', color: '#5e9eff'},
+  {name: 'RAPID',    emoji: '🌀', color: '#d05eff', duration: 15},
 ];
 const POWERUP_SPAWN_INTERVAL = 6;   // s between spawn attempts
 const POWERUP_LIFETIME = 12;        // s before despawn
@@ -65,6 +67,34 @@ const PLANE_HALF = 70;
 const SADDLE_K = 0.012;
 
 const SHAPES = [
+  // --- Torus ---
+  {
+    name: 'TORUS',
+    uHalf: PI,
+    vHalf: PI,
+    speed: 1,
+    point(a, b, out) {
+      const R = TORUS_MAJOR + TORUS_MINOR * Math.cos(b);
+      out.set(R * Math.cos(a), R * Math.sin(a), TORUS_MINOR * Math.sin(b));
+      return out;
+    },
+    tangent(a, b) {
+      const cb = Math.cos(b);
+      const sb = Math.sin(b);
+      const R = TORUS_MAJOR + TORUS_MINOR * cb;
+      _eT.set(-R * Math.sin(a), R * Math.cos(a), 0);
+      _eP.set(-TORUS_MINOR * sb * Math.cos(a), -TORUS_MINOR * sb * Math.sin(a), TORUS_MINOR * cb);
+      _n.crossVectors(_eT, _eP).normalize();
+      _eT.normalize();
+      _eP.normalize();
+    },
+    wrap(body) {
+      if (body.theta > PI) { body.theta -= TWO_PI; }
+      else if (body.theta < -PI) { body.theta += TWO_PI; }
+      if (body.phi > PI) { body.phi -= TWO_PI; }
+      else if (body.phi < -PI) { body.phi += TWO_PI; }
+    },
+  },
   // --- Sphere ---
   {
     name: 'SPHERE',
@@ -103,37 +133,9 @@ const SHAPES = [
       }
     },
   },
-  // --- Torus ---
-  {
-    name: 'TORUS',
-    uHalf: PI,
-    vHalf: PI,
-    speed: 1,
-    point(a, b, out) {
-      const R = TORUS_MAJOR + TORUS_MINOR * Math.cos(b);
-      out.set(R * Math.cos(a), R * Math.sin(a), TORUS_MINOR * Math.sin(b));
-      return out;
-    },
-    tangent(a, b) {
-      const cb = Math.cos(b);
-      const sb = Math.sin(b);
-      const R = TORUS_MAJOR + TORUS_MINOR * cb;
-      _eT.set(-R * Math.sin(a), R * Math.cos(a), 0);
-      _eP.set(-TORUS_MINOR * sb * Math.cos(a), -TORUS_MINOR * sb * Math.sin(a), TORUS_MINOR * cb);
-      _n.crossVectors(_eT, _eP).normalize();
-      _eT.normalize();
-      _eP.normalize();
-    },
-    wrap(body) {
-      if (body.theta > PI) { body.theta -= TWO_PI; }
-      else if (body.theta < -PI) { body.theta += TWO_PI; }
-      if (body.phi > PI) { body.phi -= TWO_PI; }
-      else if (body.phi < -PI) { body.phi += TWO_PI; }
-    },
-  },
   // --- Pseudosphere (tractrix revolution, constant negative curvature) ---
   {
-    name: 'PSEUDO',
+    name: 'PSEUDOSPHERE',
     uHalf: PI,
     vHalf: PSEUDO_UMAX,
     speed: 1,
@@ -147,48 +149,17 @@ const SHAPES = [
       if (body.theta > PI) { body.theta -= TWO_PI; }
       else if (body.theta < -PI) { body.theta += TWO_PI; }
       if (body.phi > PSEUDO_UMAX) {
-        body.phi = 0;
-      } else if (body.phi < 0) {
         body.phi = PSEUDO_UMAX;
-      }
-    },
-  },
-  // --- Ellipsoid (triaxial, non-uniform positive curvature) ---
-  {
-    name: 'ELLIPSOID',
-    uHalf: PI,
-    vHalf: PI_HALF,
-    speed: 1,
-    point(a, b, out) {
-      const cb = Math.cos(b);
-      out.set(ELLIP_RX * cb * Math.cos(a), ELLIP_RY * Math.sin(b), ELLIP_RZ * cb * Math.sin(a));
-      return out;
-    },
-    tangent(a, b) {
-      const ct = Math.cos(a);
-      const st = Math.sin(a);
-      const cb = Math.cos(b);
-      const sb = Math.sin(b);
-      _n.set(cb * ct / ELLIP_RX, sb / ELLIP_RY, cb * st / ELLIP_RZ).normalize();
-      _tmp.set(-st, 0, ct);
-      _eP.crossVectors(_n, _tmp).normalize();
-      _eT.crossVectors(_eP, _n).normalize();
-    },
-    wrap(body) {
-      if (body.theta > PI) { body.theta -= TWO_PI; }
-      else if (body.theta < -PI) { body.theta += TWO_PI; }
-      if (body.phi > PI_HALF) {
-        body.phi = PI - body.phi;
+        body.vPhi = -Math.abs(body.vPhi);
         body.theta = wrapAngle(body.theta + PI);
-        body.vTheta = -body.vTheta;
-        body.vPhi = -body.vPhi;
         if (body.heading !== undefined) { body.heading = wrapAngle(body.heading + PI); }
-      } else if (body.phi < -PI_HALF) {
-        body.phi = -PI - body.phi;
+        if (body === G) { shipWrapped = true; }
+      } else if (body.phi < -PSEUDO_UMAX) {
+        body.phi = -PSEUDO_UMAX;
+        body.vPhi = Math.abs(body.vPhi);
         body.theta = wrapAngle(body.theta + PI);
-        body.vTheta = -body.vTheta;
-        body.vPhi = -body.vPhi;
         if (body.heading !== undefined) { body.heading = wrapAngle(body.heading + PI); }
+        if (body === G) { shipWrapped = true; }
       }
     },
   },
@@ -212,6 +183,57 @@ const SHAPES = [
       else if (body.theta < -PLANE_HALF) { body.theta += 2 * PLANE_HALF; }
       if (body.phi > PLANE_HALF) { body.phi -= 2 * PLANE_HALF; }
       else if (body.phi < -PLANE_HALF) { body.phi += 2 * PLANE_HALF; }
+    },
+  },
+  // --- Corrugated surface (deep ripples, variable curvature, toroidal wrap) ---
+  {
+    name: 'CORRUG',
+    uHalf: PLANE_HALF,
+    vHalf: PLANE_HALF,
+    speed: 22,
+    point(a, b, out) {
+      out.set(a, 8 * Math.sin(0.05 * a) * Math.cos(0.05 * b), b);
+      return out;
+    },
+    tangent(a, b) {
+      const ca = 0.05 * a;
+      const cb = 0.05 * b;
+      _eT.set(1, 8 * 0.05 * Math.cos(ca) * Math.cos(cb), 0).normalize();
+      _eP.set(0, -8 * 0.05 * Math.sin(ca) * Math.sin(cb), 1).normalize();
+      _n.crossVectors(_eP, _eT).normalize();
+    },
+    wrap(body) {
+      if (body.theta > PLANE_HALF) { body.theta -= 2 * PLANE_HALF; }
+      else if (body.theta < -PLANE_HALF) { body.theta += 2 * PLANE_HALF; }
+      if (body.phi > PLANE_HALF) { body.phi -= 2 * PLANE_HALF; }
+      else if (body.phi < -PLANE_HALF) { body.phi += 2 * PLANE_HALF; }
+    },
+  },
+  // --- Hyperbolic Möbius Strip (non-orientable, half-twist, negative curvature) ---
+  {
+    name: 'MOBIUS',
+    uHalf: PI,
+    vHalf: 25,
+    speed: 1,
+    point(a, b, out) {
+      const R = RADIUS;
+      const t = a;
+      const half = t * 0.5;
+      const cosH = Math.cos(half);
+      const sinH = Math.sin(half);
+      out.set(
+        (R + b * cosH) * Math.cos(t),
+        (R + b * cosH) * Math.sin(t),
+        b * sinH,
+      );
+      return out;
+    },
+    tangent: null,
+    wrap(body) {
+      if (body.theta > PI) { body.theta -= TWO_PI; }
+      else if (body.theta < -PI) { body.theta += TWO_PI; }
+      if (body.phi > 25) { body.phi -= 50; }
+      else if (body.phi < -25) { body.phi += 50; }
     },
   },
 ];
@@ -360,15 +382,19 @@ const G = {
   // Power-up active timers
   tripleTimer: 0,
   speedTimer: 0,
+  rapidTimer: 0,
   shieldHits: 0,
   fireworkNext: false,
   powerupCd: POWERUP_SPAWN_INTERVAL,
+  colorMode: true,
+  firstPerson: false,
 };
 
 let r360 = null;
 let scene = null;
 let shipMesh = null;
 let engineMesh = null;
+let shieldMesh = null;
 let bullets = [];
 let asteroids = [];
 let fx = [];
@@ -418,6 +444,8 @@ function tangentFrame(a, b) {
   }
 }
 
+let shipWrapped = false;
+
 function wrapBody(body) {
   SHAPE.wrap(body);
 }
@@ -425,7 +453,11 @@ function wrapBody(body) {
 function spawnDistOK(theta, phi) {
   surfacePoint(G.theta, G.phi, _tmp);
   surfacePoint(theta, phi, _tmp2);
-  return _tmp.distanceTo(_tmp2) > MIN_SPAWN_DIST;
+  if (_tmp.distanceTo(_tmp2) < MIN_SPAWN_DIST) { return false; }
+  if (SHAPE.uHalf === PLANE_HALF) {
+    if (theta * theta + phi * phi < 1600) { return false; }
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,9 +507,10 @@ function pointsToGeo(pts) {
 
 function buildArenaGrid() {
   const grid = new THREE.Group();
-  const matDim = new THREE.LineBasicMaterial({color: 0x14404d, transparent: true, opacity: 0.6});
-  const matPrime = new THREE.LineBasicMaterial({color: 0x2c6f80, transparent: true, opacity: 0.8});
-  const matEq = new THREE.LineBasicMaterial({color: 0x3d95a8, transparent: true, opacity: 0.85});
+  const isMobius = SHAPE.name === 'MOBIUS';
+  const matDim = new THREE.LineBasicMaterial({color: isMobius ? 0x0a3318 : 0x14404d, transparent: true, opacity: 0.6});
+  const matPrime = new THREE.LineBasicMaterial({color: isMobius ? 0x1a5c2e : 0x2c6f80, transparent: true, opacity: 0.8});
+  const matEq = new THREE.LineBasicMaterial({color: isMobius ? 0x2a8c44 : 0x3d95a8, transparent: true, opacity: 0.85});
 
   const uCount = 16;
   const vCount = 8;
@@ -521,6 +554,8 @@ function buildArenaGrid() {
 const QUADRANT_COLORS = [0x3ad6ff, 0x3dffa5, 0xff9d3d, 0xc14dff];
 
 function quadrantColor(a, b) {
+  if (!G.colorMode) { return 0x556666; }
+  if (SHAPE.name === 'MOBIUS') { return 0x3dffa5; }
   const north = b >= 0;
   const east = SHAPE.uHalf === PLANE_HALF ? a >= 0 : Math.cos(a) >= 0;
   if (north) { return east ? QUADRANT_COLORS[0] : QUADRANT_COLORS[1]; }
@@ -564,12 +599,20 @@ function buildQuadrantMesh(u0, u1, v0, v1, color) {
 
 function buildQuadrants() {
   const group = new THREE.Group();
+  if (SHAPE.name === 'MOBIUS') { return group; }
   const h = SHAPE.uHalf;
   const vh = SHAPE.vHalf;
-  group.add(buildQuadrantMesh(-h, 0, 0, vh, QUADRANT_COLORS[0]));
-  group.add(buildQuadrantMesh(0, h, 0, vh, QUADRANT_COLORS[1]));
-  group.add(buildQuadrantMesh(-h, 0, -vh, 0, QUADRANT_COLORS[2]));
-  group.add(buildQuadrantMesh(0, h, -vh, 0, QUADRANT_COLORS[3]));
+  const mono = !G.colorMode;
+  const c0 = mono ? 0x556666 : QUADRANT_COLORS[0];
+  const c1 = mono ? 0x556666 : QUADRANT_COLORS[1];
+  const c2 = mono ? 0x556666 : QUADRANT_COLORS[2];
+  const c3 = mono ? 0x556666 : QUADRANT_COLORS[3];
+  const op = mono ? 0.08 : 0.32;
+  group.add(buildQuadrantMesh(-h, 0, 0, vh, c0));
+  group.add(buildQuadrantMesh(0, h, 0, vh, c1));
+  group.add(buildQuadrantMesh(-h, 0, -vh, 0, c2));
+  group.add(buildQuadrantMesh(0, h, -vh, 0, c3));
+  group.children.forEach(m => { m.material.opacity = op; });
   return group;
 }
 
@@ -578,6 +621,7 @@ function rebuildArena() {
   if (quadrantGroup) { scene.remove(quadrantGroup); }
   arenaGroup = buildArenaGrid();
   quadrantGroup = buildQuadrants();
+  arenaGroup.visible = G.colorMode;
   scene.add(arenaGroup);
   scene.add(quadrantGroup);
 }
@@ -630,6 +674,13 @@ function buildShip() {
   ]), engMat);
   engineMesh.visible = false;
   group.add(engineMesh);
+
+  shieldMesh = new THREE.LineSegments(
+    new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(8, 1)),
+    new THREE.LineBasicMaterial({color: 0x5e9eff, transparent: true, opacity: 0.45})
+  );
+  shieldMesh.visible = false;
+  group.add(shieldMesh);
 
   return group;
 }
@@ -742,9 +793,10 @@ function beginWave() {
 function spawnAsteroid(tier) {
   let theta = 0;
   let phi = 0;
+  const vMin = SHAPE.vMin !== undefined ? SHAPE.vMin : -SHAPE.vHalf;
   for (let tries = 0; tries < 40; tries++) {
-    theta = (Math.random() * 2 - 1) * PI;
-    phi = (Math.random() * 2 - 1) * SHAPE.vHalf;
+    theta = (Math.random() * 2 - 1) * SHAPE.uHalf;
+    phi = vMin + Math.random() * (SHAPE.vHalf - vMin);
     if (spawnDistOK(theta, phi)) {
       break;
     }
@@ -780,6 +832,7 @@ function removeAsteroid(a) {
 
 function fireBullet() {
   Audio.shoot();
+
   const offsets = G.tripleTimer > 0 ? [-0.35, 0, 0.35] : [0];
   const isFirework = G.fireworkNext;
   if (G.fireworkNext) { G.fireworkNext = false; }
@@ -817,8 +870,8 @@ function hitAsteroid(bullet, asteroid) {
   spawnRing(asteroid.theta, asteroid.phi, 0x9ff2ff, {life: 0.35, grow: 26});
 
   if (bullet.firework) {
-    for (let i = 0; i < 8; i++) {
-      const h = bullet.heading + (i / 8) * TWO_PI;
+    for (let i = 0; i < 20; i++) {
+      const h = bullet.heading + (i / 20) * TWO_PI;
       const fb = {
         theta: asteroid.theta + Math.sin(h) * 0.05,
         phi: asteroid.phi + Math.cos(h) * 0.05,
@@ -851,13 +904,16 @@ function hitAsteroid(bullet, asteroid) {
   removeAsteroid(asteroid);
 
   if (asteroids.length === 0 && G.status === 'playing') {
-    setMsg('WAVE CLEAR', 1.2);
-  G.startTimer = 1.3;
-  G.tripleTimer = 0;
-  G.speedTimer = 0;
-  G.shieldHits = 0;
-  G.fireworkNext = false;
-  G.powerupCd = POWERUP_SPAWN_INTERVAL;
+    const nextIdx = G.wave % SHAPES.length;
+    const nextName = SHAPES[nextIdx].name;
+    setMsg('WAVE CLEAR  \u2192  ' + nextName, 2.2);
+    G.startTimer = 2.3;
+    G.tripleTimer = 0;
+    G.speedTimer = 0;
+    G.rapidTimer = 0;
+    G.shieldHits = 0;
+    G.fireworkNext = false;
+    G.powerupCd = POWERUP_SPAWN_INTERVAL;
   }
 }
 
@@ -871,8 +927,9 @@ function killShip(hitAsteroid) {
       spawnRing(hitAsteroid.theta, hitAsteroid.phi, 0x5e9eff, {life: 0.4, grow: 22});
       removeAsteroid(hitAsteroid);
       if (asteroids.length === 0 && G.status === 'playing') {
-        setMsg('WAVE CLEAR', 1.2);
-        G.startTimer = 1.3;
+        const nextIdx2 = G.wave % SHAPES.length;
+        setMsg('WAVE CLEAR  \u2192  ' + SHAPES[nextIdx2].name, 2.2);
+        G.startTimer = 2.3;
       }
     }
     return;
@@ -928,9 +985,10 @@ function spawnPowerup() {
   const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
   let theta = 0;
   let phi = 0;
+  const vMin = SHAPE.vMin !== undefined ? SHAPE.vMin : -SHAPE.vHalf;
   for (let tries = 0; tries < 40; tries++) {
     theta = (Math.random() * 2 - 1) * SHAPE.uHalf;
-    phi = (Math.random() * 2 - 1) * SHAPE.vHalf;
+    phi = vMin + Math.random() * (SHAPE.vHalf - vMin);
     if (spawnDistOK(theta, phi)) { break; }
   }
   const mesh = makePowerupSprite(type);
@@ -971,10 +1029,12 @@ function updatePowerups(dt) {
 
 function applyPowerup(type) {
   switch (type.name) {
-    case 'TRIPLE':  G.tripleTimer = type.duration; break;
-    case 'SPEED':   G.speedTimer = type.duration; break;
+    case 'LIFE':     G.lives++; break;
+    case 'TRIPLE':   G.tripleTimer += type.duration; break;
+    case 'SPEED':    G.speedTimer += type.duration; break;
     case 'FIREWORK': G.fireworkNext = true; break;
-    case 'SHIELD':  G.shieldHits += 1; break;
+    case 'SHIELD':   G.shieldHits++; break;
+    case 'RAPID':    G.rapidTimer += type.duration; break;
   }
   updateHudOverlay();
 }
@@ -1030,9 +1090,28 @@ function handleCollisions() {
     surfacePoint(G.theta, G.phi, _tmp);
     for (const a of asteroids) {
       surfacePoint(a.theta, a.phi, _tmp2);
-      const rr = a.radius + SHIP_RADIUS;
+      const rr = a.radius + (G.shieldHits > 0 ? SHIP_RADIUS * 3 : SHIP_RADIUS);
       if (_tmp.distanceToSquared(_tmp2) < rr * rr) {
         killShip(a);
+        break;
+      }
+    }
+  }
+
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    surfacePoint(b.theta, b.phi, _tmp);
+    for (let j = powerups.length - 1; j >= 0; j--) {
+      const p = powerups[j];
+      surfacePoint(p.theta, p.phi, _tmp2);
+      if (_tmp.distanceTo(_tmp2) < POWERUP_PICKUP_DIST) {
+        Audio.powerup();
+        applyPowerup(p.type);
+        spawnRing(p.theta, p.phi, 0x5eff5e, {life: 0.4, grow: 14});
+        scene.remove(p.mesh);
+        powerups.splice(j, 1);
+        scene.remove(b.mesh);
+        bullets.splice(i, 1);
         break;
       }
     }
@@ -1066,6 +1145,7 @@ function update(dt) {
   if (G.invuln > 0) { G.invuln -= dt; }
   if (G.tripleTimer > 0) { G.tripleTimer -= dt; }
   if (G.speedTimer > 0) { G.speedTimer -= dt; }
+  if (G.rapidTimer > 0) { G.rapidTimer -= dt; }
 
   const shipAlive = G.respawnTimer <= 0;
 
@@ -1098,6 +1178,13 @@ function update(dt) {
       G.vTheta += Math.sin(G.heading) * ACCEL * amt * dt * SHAPE.speed;
       G.vPhi += Math.cos(G.heading) * ACCEL * amt * dt * SHAPE.speed;
     }
+
+    if (SHAPE.name === 'MOBIUS') {
+      const kbQ = !!keys.q;
+      const kbE = !!keys.e;
+      if (kbQ) { G.vPhi -= ACCEL * 0.7 * dt; }
+      if (kbE) { G.vPhi += ACCEL * 0.7 * dt; }
+    }
     const spd = Math.hypot(G.vTheta, G.vPhi);
     const speedMul = G.speedTimer > 0 ? 1.8 : 1;
     const maxV = MAX_VEL * SHAPE.speed * speedMul;
@@ -1105,9 +1192,14 @@ function update(dt) {
       G.vTheta *= maxV / spd;
       G.vPhi *= maxV / spd;
     }
-    const damp = Math.exp(-DRAG * dt);
-    G.vTheta *= damp;
-    G.vPhi *= damp;
+    if (SHAPE.name === 'MOBIUS') {
+      G.vTheta *= Math.exp(-DRAG * dt);
+      G.vPhi *= Math.exp(-0.001 * dt);
+    } else {
+      const damp = Math.exp(-DRAG * dt);
+      G.vTheta *= damp;
+      G.vPhi *= damp;
+    }
 
     G.theta += G.vTheta * dt;
     G.phi += G.vPhi * dt;
@@ -1116,15 +1208,20 @@ function update(dt) {
     G.fireCd -= dt;
     if (keys[' '] && G.fireCd <= 0) {
       fireBullet();
-      G.fireCd = FIRE_COOLDOWN;
+      G.fireCd = G.rapidTimer > 0 ? FIRE_COOLDOWN / 3 : FIRE_COOLDOWN;
     }
 
     placeOriented(shipMesh, G);
     engineMesh.visible = !!up;
     const blink = G.invuln > 0 && Math.floor(G.invuln * 8) % 2 === 0;
     shipMesh.visible = !blink;
+    if (shieldMesh) {
+      shieldMesh.visible = G.shieldHits > 0 && !blink;
+      shieldMesh.rotation.y += dt * 1.2;
+    }
   } else {
     shipMesh.visible = false;
+    if (shieldMesh) { shieldMesh.visible = false; }
   }
 
   updateBullets(dt);
@@ -1158,18 +1255,25 @@ function computeCamera() {
   }
   _refE.crossVectors(_n, _refT).normalize();
 
-  const vp = VIEW.pitch;
-  const vy = VIEW.yaw;
-  const cpy = Math.cos(vp);
-  const spy = Math.sin(vp);
-  const cy = Math.cos(vy);
-  const sy = Math.sin(vy);
+  if (G.firstPerson) {
+    _camDir.copy(_eT).multiplyScalar(Math.sin(G.heading))
+      .addScaledVector(_eP, Math.cos(G.heading))
+      .normalize();
+    _camPosV.copy(_shipPosV).addScaledVector(_n, 0.3);
+  } else {
+    const vp = VIEW.pitch;
+    const vy = VIEW.yaw;
+    const cpy = Math.cos(vp);
+    const spy = Math.sin(vp);
+    const cy = Math.cos(vy);
+    const sy = Math.sin(vy);
 
-  _camDir.copy(_n).multiplyScalar(cpy)
-    .addScaledVector(_refT, spy * cy)
-    .addScaledVector(_refE, spy * sy)
-    .normalize();
-  _camPosV.copy(_shipPosV).addScaledVector(_n, CAM_HOVER);
+    _camDir.copy(_n).multiplyScalar(cpy)
+      .addScaledVector(_refT, spy * cy)
+      .addScaledVector(_refE, spy * sy)
+      .normalize();
+    _camPosV.copy(_shipPosV).addScaledVector(_n, CAM_HOVER);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1187,15 +1291,28 @@ function onFrame(ms) {
   computeCamera();
 
   _smoothCam.lerp(_camPosV, Math.min(1, dt * 8));
+  if (shipWrapped) {
+    _smoothCam.copy(_camPosV);
+    _refInit = false;
+    shipWrapped = false;
+  }
 
-  _lookZ.subVectors(_smoothCam, _shipPosV).normalize();
-  _lookUp.copy(_refT).addScaledVector(_lookZ, -_refT.dot(_lookZ));
-  if (_lookUp.lengthSq() < 1e-6) { _lookUp.copy(_refT); }
-  _lookUp.normalize();
-  _camRight.crossVectors(_lookUp, _lookZ).normalize();
-  _lookUp.crossVectors(_lookZ, _camRight).normalize();
-  _camMat.makeBasis(_camRight, _lookUp, _lookZ);
-  _camQuat.setFromRotationMatrix(_camMat);
+  if (G.firstPerson) {
+    _camQuat.copy(shipMesh.quaternion);
+    _tmp.set(0, 1, 0);
+    _rollQuat.setFromAxisAngle(_tmp, PI);
+    _camQuat.multiply(_rollQuat);
+    _smoothCam.copy(_shipPosV).addScaledVector(_n, 0.3);
+  } else {
+    _lookZ.subVectors(_smoothCam, _shipPosV).normalize();
+    _lookUp.copy(_refT).addScaledVector(_lookZ, -_refT.dot(_lookZ));
+    if (_lookUp.lengthSq() < 1e-6) { _lookUp.copy(_refT); }
+    _lookUp.normalize();
+    _camRight.crossVectors(_lookUp, _lookZ).normalize();
+    _lookUp.crossVectors(_lookZ, _camRight).normalize();
+    _camMat.makeBasis(_camRight, _lookUp, _lookZ);
+    _camQuat.setFromRotationMatrix(_camMat);
+  }
 
   r360._cameraPosition[0] = _smoothCam.x;
   r360._cameraPosition[1] = _smoothCam.y;
@@ -1217,6 +1334,8 @@ function onKeyDown(e) {
   keys[k] = true;
   if (k === 'r' && G.status === 'over') { resetGame(); }
   if (k === 't') { toggleGeometry(); }
+  if (k === 'c') { toggleColors(); }
+  if (k === 'f') { toggleFirstPerson(); }
 }
 
 function onKeyUp(e) {
@@ -1268,6 +1387,14 @@ function toggleGeometry() {
   wrapBody(G);
   for (const a of asteroids) {
     wrapBody(a);
+    if (SHAPE.uHalf === PLANE_HALF) {
+      const d = Math.hypot(a.theta, a.phi);
+      if (d < 40) {
+        const push = 40 / (d || 1);
+        a.theta *= push;
+        a.phi *= push;
+      }
+    }
     a.mesh.material.color.setHex(quadrantColor(a.theta, a.phi));
   }
   for (const b of bullets) { wrapBody(b); }
@@ -1277,11 +1404,24 @@ function toggleGeometry() {
   updateToggleLabel();
 }
 
+function toggleColors() {
+  G.colorMode = !G.colorMode;
+  rebuildArena();
+  for (const a of asteroids) {
+    a.mesh.material.color.setHex(quadrantColor(a.theta, a.phi));
+  }
+}
+
+function toggleFirstPerson() {
+  G.firstPerson = !G.firstPerson;
+}
+
 function buildUiControls() {
   const wrap = document.createElement('div');
   wrap.id = 'r360-ui-controls';
   wrap.style.cssText =
-    'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:110;pointer-events:none;';
+    'position:fixed;top:40px;left:50%;transform:translateX(-50%);z-index:110;pointer-events:none;' +
+    'display:flex;gap:8px;';
 
   const btn = document.createElement('div');
   btn.innerText = SHAPE.name;
@@ -1296,8 +1436,29 @@ function buildUiControls() {
     toggleGeometry();
   });
   wrap.appendChild(btn);
-  document.body.appendChild(wrap);
   toggleBtn = btn;
+
+  const colorBtn = document.createElement('div');
+  colorBtn.innerText = 'COLOR';
+  colorBtn.style.cssText = btn.style.cssText;
+  colorBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleColors();
+  });
+  wrap.appendChild(colorBtn);
+
+  const fpBtn = document.createElement('div');
+  fpBtn.innerText = 'FPS';
+  fpBtn.style.cssText = btn.style.cssText;
+  fpBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleFirstPerson();
+  });
+  wrap.appendChild(fpBtn);
+
+  document.body.appendChild(wrap);
 }
 
 // ---------------------------------------------------------------------------
@@ -1310,15 +1471,19 @@ function buildHudOverlay() {
   const el = document.createElement('div');
   el.id = 'hud-overlay';
   el.style.cssText =
-    'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:120;' +
-    'pointer-events:none;display:flex;gap:24px;align-items:center;' +
-    'font-family:monospace;color:#eaffff;font-size:18px;letter-spacing:1px;' +
+    'position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:120;' +
+    'pointer-events:none;display:flex;gap:14px;align-items:center;' +
+    'font-family:monospace;color:#eaffff;font-size:12px;letter-spacing:1px;' +
     'background:rgba(3,12,16,0.55);border:1px solid rgba(46,107,122,0.5);' +
-    'border-radius:10px;padding:6px 20px;';
+    'border-radius:8px;padding:4px 12px;white-space:nowrap;';
   el.innerHTML =
     '<span id="hud-score">SCORE 000000</span>' +
-    '<span id="hud-lives">LIVES ▲▲▲</span>' +
-    '<span id="hud-powerups" style="font-size:16px;"></span>';
+    '<span style="color:rgba(46,107,122,0.6);">│</span>' +
+    '<span id="hud-level">LVL 01</span>' +
+    '<span style="color:rgba(46,107,122,0.6);">│</span>' +
+    '<span id="hud-lives">▲▲▲</span>' +
+    '<span style="color:rgba(46,107,122,0.6);">│</span>' +
+    '<span id="hud-powerups" style="font-size:11px;color:#5eff5e;"></span>';
   document.body.appendChild(el);
   hudEl = el;
 }
@@ -1326,18 +1491,22 @@ function buildHudOverlay() {
 function updateHudOverlay() {
   if (!hudEl) { return; }
   const scoreEl = document.getElementById('hud-score');
+  const levelEl = document.getElementById('hud-level');
   const livesEl = document.getElementById('hud-lives');
   const pupEl = document.getElementById('hud-powerups');
   if (scoreEl) {
     scoreEl.textContent = 'SCORE ' + String(G.score).padStart(6, '0');
   }
+  if (levelEl) {
+    levelEl.textContent = 'LVL ' + String(Math.max(1, G.wave)).padStart(2, '0');
+  }
   if (livesEl) {
-    livesEl.textContent = 'LIVES ' + '▲'.repeat(Math.max(0, G.lives));
+    livesEl.textContent = '▲'.repeat(Math.max(0, G.lives));
   }
   if (pupEl) {
     const parts = [];
     if (G.tripleTimer > 0) {
-      parts.push('🚀 ' + Math.ceil(G.tripleTimer) + 's');
+      parts.push('🔫 ' + Math.ceil(G.tripleTimer) + 's');
     }
     if (G.speedTimer > 0) {
       parts.push('⚡ ' + Math.ceil(G.speedTimer) + 's');
@@ -1347,6 +1516,9 @@ function updateHudOverlay() {
     }
     if (G.shieldHits > 0) {
       parts.push('🛡️ x' + G.shieldHits);
+    }
+    if (G.rapidTimer > 0) {
+      parts.push('🌀 ' + Math.ceil(G.rapidTimer) + 's');
     }
     pupEl.textContent = parts.join('  ');
   }
