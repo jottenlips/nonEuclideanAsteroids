@@ -262,6 +262,104 @@ const SHAPES = [
       else if (body.phi < -PI) { body.phi += TWO_PI; }
     },
   },
+  // --- Einstein (flat fabric warped by random gravity wells: planets + orbiting moons) ---
+  {
+    name: 'EINSTEIN',
+    uHalf: PLANE_HALF * 4,
+    vHalf: PLANE_HALF * 4,
+    speed: 88,
+    _bodies: [],
+    _generate() {
+      const bodies = [];
+      const half = this.uHalf - 15;
+      const minSep = 50;
+      const planetCount = 3 + Math.floor(Math.random() * 3);
+      const placed = [];
+      for (let i = 0; i < planetCount; i++) {
+        let x, z, ok;
+        for (let t = 0; t < 30; t++) {
+          x = (Math.random() * 2 - 1) * half;
+          z = (Math.random() * 2 - 1) * half;
+          ok = true;
+          if (Math.hypot(x, z) < 35) { ok = false; }
+          for (const p of placed) {
+            if (Math.hypot(x - p.x, z - p.z) < minSep) { ok = false; break; }
+          }
+          if (ok) break;
+        }
+        placed.push({ x, z });
+        const mass = 8 + Math.random() * 24;
+        const spread = 80 + Math.random() * 160;
+        const radius = 3 + mass * 0.3;
+        bodies.push({ x, z, mass, spread, radius, color: 0xddaa44, orbitAngle: 0, orbitR: 0 });
+        const moonCount = Math.random() < 0.6 ? 1 : 0;
+        for (let m = 0; m < moonCount; m++) {
+          const moonDist = radius + 24 + Math.random() * 16;
+          const moonMass = 3 + Math.random() * 7;
+          const moonSpread = 30 + Math.random() * 60;
+          const moonRadius = 2 + moonMass * 0.25;
+          bodies.push({
+            x, z, mass: moonMass, spread: moonSpread, radius: moonRadius,
+            color: 0x88aacc, orbitAngle: Math.random() * Math.PI * 2,
+            orbitR: moonDist, parentIdx: bodies.length - 1,
+          });
+          if (Math.random() < 0.1) {
+            const m2Dist = radius + 36 + Math.random() * 16;
+            const m2Mass = 1.5 + Math.random() * 3;
+            const m2Spread = 15 + Math.random() * 25;
+            bodies.push({
+              x, z, mass: m2Mass, spread: m2Spread, radius: 1.2 + m2Mass * 0.2,
+              color: 0xaaccee, orbitAngle: Math.random() * Math.PI * 2,
+              orbitR: m2Dist, parentIdx: bodies.length - moonCount - 1,
+            });
+          }
+        }
+      }
+      this._bodies = bodies;
+    },
+    _bodyPos(body, out) {
+      if (body.orbitR > 0 && body.parentIdx !== undefined) {
+        const parent = this._bodies[body.parentIdx];
+        this._bodyPos(parent, out);
+        out.x += body.orbitR * Math.cos(body.orbitAngle);
+        out.z += body.orbitR * Math.sin(body.orbitAngle);
+      } else if (body.orbitR > 0) {
+        out.set(body.x + body.orbitR * Math.cos(body.orbitAngle), 0, body.z + body.orbitR * Math.sin(body.orbitAngle));
+      } else {
+        out.set(body.x, 0, body.z);
+      }
+    },
+    point(a, b, out) {
+      let y = 0;
+      for (const body of this._bodies) {
+        this._bodyPos(body, _tmp);
+        const d2 = (a - _tmp.x) * (a - _tmp.x) + (b - _tmp.z) * (b - _tmp.z);
+        y -= body.mass * Math.exp(-d2 / body.spread);
+      }
+      out.set(a, y, b);
+      return out;
+    },
+    tangent(a, b) {
+      const eps = 0.15;
+      this.point(a + eps, b, _tmp);
+      this.point(a - eps, b, _tmp2);
+      _eu.subVectors(_tmp, _tmp2).normalize();
+      this.point(a, b + eps, _tmp);
+      this.point(a, b - eps, _tmp2);
+      _ev.subVectors(_tmp, _tmp2).normalize();
+      _n.crossVectors(_eu, _ev).normalize();
+      _eT.copy(_eu);
+      _eP.copy(_ev);
+    },
+    wrap(body) {
+      const uh = this.uHalf;
+      const vh = this.vHalf;
+      if (body.theta > uh) { body.theta -= 2 * uh; }
+      else if (body.theta < -uh) { body.theta += 2 * uh; }
+      if (body.phi > vh) { body.phi -= 2 * vh; }
+      else if (body.phi < -vh) { body.phi += 2 * vh; }
+    },
+  },
 ];
 
 let shapeIdx = 0;
@@ -317,6 +415,7 @@ let lastMY = 0;
 // Arena mesh references (swapped on shape change)
 let arenaGroup = null;
 let quadrantGroup = null;
+let einsteinGroup = null;
 let toggleBtn = null;
 
 // ---------------------------------------------------------------------------
@@ -412,7 +511,7 @@ const G = {
   shieldHits: 0,
   fireworkNext: false,
   powerupCd: POWERUP_SPAWN_INTERVAL,
-  colorMode: true,
+  colorMode: false,
   firstPerson: false,
 };
 
@@ -480,8 +579,17 @@ function spawnDistOK(theta, phi) {
   surfacePoint(G.theta, G.phi, _tmp);
   surfacePoint(theta, phi, _tmp2);
   if (_tmp.distanceTo(_tmp2) < MIN_SPAWN_DIST) { return false; }
-  if (SHAPE.uHalf === PLANE_HALF) {
+  if (SHAPE.uHalf === PLANE_HALF || SHAPE.name === 'EINSTEIN') {
     if (theta * theta + phi * phi < 1600) { return false; }
+  }
+  if (SHAPE.name === 'EINSTEIN') {
+    const s = SHAPE;
+    s.point(theta, phi, _tmp);
+    for (const body of s._bodies) {
+      s._bodyPos(body, _tmp2);
+      s.point(_tmp2.x, _tmp2.z, _tmp2);
+      if (_tmp.distanceTo(_tmp2) < body.radius + 8) { return false; }
+    }
   }
   return true;
 }
@@ -534,12 +642,13 @@ function pointsToGeo(pts) {
 function buildArenaGrid() {
   const grid = new THREE.Group();
   const isGreen = SHAPE.name === 'MOBIUS' || SHAPE.uHalf === PLANE_HALF;
+  const isBig = SHAPE.name === 'EINSTEIN';
   const matDim = new THREE.LineBasicMaterial({color: isGreen ? 0x0a3318 : 0x14404d, transparent: true, opacity: 0.6});
   const matPrime = new THREE.LineBasicMaterial({color: isGreen ? 0x1a5c2e : 0x2c6f80, transparent: true, opacity: 0.8});
   const matEq = new THREE.LineBasicMaterial({color: isGreen ? 0x2a8c44 : 0x3d95a8, transparent: true, opacity: 0.85});
 
-  const uCount = isGreen ? 24 : 16;
-  const vCount = isGreen ? 16 : 8;
+  const uCount = isBig ? 32 : isGreen ? 24 : 16;
+  const vCount = isBig ? 24 : isGreen ? 16 : 8;
   const uHalf = SHAPE.uHalf;
   const vMin = -SHAPE.vHalf;
   const vMax = SHAPE.vHalf;
@@ -643,14 +752,50 @@ function buildQuadrants() {
   return group;
 }
 
+const _ePos = new THREE.Vector3();
+
+function buildEinsteinBodies() {
+  einsteinGroup = new THREE.Group();
+  const s = SHAPE;
+  if (s._bodies.length === 0) { s._generate(); }
+
+  for (const body of s._bodies) {
+    const geo = new THREE.SphereGeometry(body.radius, 24, 16);
+    const mat = new THREE.MeshBasicMaterial({ color: body.color });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.body = body;
+    body.mesh = mesh;
+    einsteinGroup.add(mesh);
+  }
+
+  einsteinGroup.visible = true;
+  scene.add(einsteinGroup);
+  updateEinsteinMeshPositions();
+}
+
+function rebuildEinsteinGrid() {
+  if (!arenaGroup) return;
+  arenaGroup.traverse(child => {
+    if (child.geometry) { child.geometry.dispose(); }
+  });
+  scene.remove(arenaGroup);
+  arenaGroup = buildArenaGrid();
+  arenaGroup.visible = true;
+  scene.add(arenaGroup);
+}
+
 function rebuildArena() {
   if (arenaGroup) { scene.remove(arenaGroup); }
   if (quadrantGroup) { scene.remove(quadrantGroup); }
+  if (einsteinGroup) { scene.remove(einsteinGroup); }
   arenaGroup = buildArenaGrid();
   quadrantGroup = buildQuadrants();
-  arenaGroup.visible = G.colorMode;
+  arenaGroup.visible = G.colorMode || SHAPE.name === 'EINSTEIN';
   scene.add(arenaGroup);
   scene.add(quadrantGroup);
+  if (SHAPE.name === 'EINSTEIN') {
+    buildEinsteinBodies();
+  }
 }
 
 function buildStars(count, rMin, rMax, color, size) {
@@ -1094,6 +1239,64 @@ function updateAsteroids(dt) {
   }
 }
 
+function updateEinsteinMeshPositions() {
+  if (SHAPE.name !== 'EINSTEIN' || !einsteinGroup) return;
+  const s = SHAPE;
+  for (const body of s._bodies) {
+    if (!body.mesh) continue;
+    s._bodyPos(body, _ePos);
+    body.mesh.position.set(_ePos.x, 0, _ePos.z);
+    SHAPE.point(_ePos.x, _ePos.z, _ePos);
+    body.mesh.position.y = _ePos.y + body.radius * 0.3;
+  }
+}
+
+let _einsteinFrame = 0;
+function updateEinsteinBodies(dt) {
+  if (SHAPE.name !== 'EINSTEIN') return;
+  const s = SHAPE;
+  for (const body of s._bodies) {
+    if (body.orbitR > 0) {
+      body.orbitAngle += dt * 0.25;
+    }
+  }
+  updateEinsteinMeshPositions();
+  if (++_einsteinFrame % 6 === 0) { rebuildEinsteinGrid(); }
+}
+
+function handleEinsteinCollisions() {
+  if (SHAPE.name !== 'EINSTEIN' || !einsteinGroup) return;
+  const s = SHAPE;
+
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    surfacePoint(b.theta, b.phi, _tmp);
+    for (const body of s._bodies) {
+      s._bodyPos(body, _tmp2);
+      s.point(_tmp2.x, _tmp2.z, _tmp2);
+      if (_tmp.distanceTo(_tmp2) < body.radius + 1) {
+        scene.remove(b.mesh);
+        bullets.splice(i, 1);
+        spawnRing(b.theta, b.phi, 0xff8844, { life: 0.3, grow: 6 });
+        break;
+      }
+    }
+  }
+
+  if (G.status === 'playing' && G.respawnTimer <= 0 && G.invuln <= 0) {
+    surfacePoint(G.theta, G.phi, _tmp);
+    const hitR = G.shieldHits > 0 ? SHIP_RADIUS * 3 : SHIP_RADIUS;
+    for (const body of s._bodies) {
+      s._bodyPos(body, _tmp2);
+      s.point(_tmp2.x, _tmp2.z, _tmp2);
+      if (_tmp.distanceTo(_tmp2) < body.radius + hitR) {
+        killShip(null);
+        break;
+      }
+    }
+  }
+}
+
 function handleCollisions() {
   if (asteroids.length === 0) { return; }
 
@@ -1241,7 +1444,9 @@ function update(dt) {
 
   updateBullets(dt);
   updateAsteroids(dt);
+  updateEinsteinBodies(dt);
   handleCollisions();
+  handleEinsteinCollisions();
   updatePowerups(dt);
   updateFx(dt);
   updateHudOverlay();
@@ -1287,7 +1492,8 @@ function computeCamera() {
       .addScaledVector(_refT, spy * cy)
       .addScaledVector(_refE, spy * sy)
       .normalize();
-    _camPosV.copy(_shipPosV).addScaledVector(_n, CAM_HOVER);
+    const hover = CAM_HOVER * (SHAPE.name === 'EINSTEIN' ? 3 : 1);
+    _camPosV.copy(_shipPosV).addScaledVector(_n, hover);
   }
 }
 

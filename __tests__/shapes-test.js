@@ -182,6 +182,19 @@ async function testToggleCorrug(errors) {
     (newErrors.length > 0 ? ' (got: ' + newErrors.join('; ') + ')' : ''));
 }
 
+async function testToggleMobius(errors) {
+  console.log('\n[6b] Press T -> EINSTEIN');
+  const errorsBefore = errors.length;
+  await pressKey('t');
+
+  const label = await getShapeLabel();
+  assert(label === 'EINSTEIN', 'Shape label shows EINSTEIN (got: ' + label + ')');
+
+  const newErrors = errors.slice(errorsBefore);
+  assert(newErrors.length === 0, 'No errors during EINSTEIN toggle' +
+    (newErrors.length > 0 ? ' (got: ' + newErrors.join('; ') + ')' : ''));
+}
+
 async function testToggleWraps(errors) {
   console.log('\n[7] Press T -> wraps to TORUS');
   const errorsBefore = errors.length;
@@ -230,7 +243,7 @@ async function testToggleMidPlay(errors) {
   const errorsBefore = errors.length;
 
   // Rapid toggle through all shapes twice
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 14; i++) {
     await pressKey('t');
   }
 
@@ -311,6 +324,7 @@ async function run() {
     await testTogglePseudo(errors);
     await testTogglePlane(errors);
     await testToggleCorrug(errors);
+    await testToggleMobius(errors);
     await testToggleWraps(errors);
     await testKeyboardThrustAndFire(errors);
     await testToggleMidPlay(errors);
