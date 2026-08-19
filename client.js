@@ -213,27 +213,53 @@ const SHAPES = [
   {
     name: 'MOBIUS',
     uHalf: PI,
-    vHalf: 25,
+    vHalf: PI,
     speed: 1,
     point(a, b, out) {
       const R = RADIUS;
+      const stripW = 14;
+      const bw = (b / PI) * stripW;
       const t = a;
       const half = t * 0.5;
       const cosH = Math.cos(half);
       const sinH = Math.sin(half);
       out.set(
-        (R + b * cosH) * Math.cos(t),
-        (R + b * cosH) * Math.sin(t),
-        b * sinH,
+        (R + bw * cosH) * Math.cos(t),
+        (R + bw * cosH) * Math.sin(t),
+        bw * sinH,
       );
       return out;
     },
-    tangent: null,
+    tangent(a, b) {
+      const R = RADIUS;
+      const stripW = 14;
+      const bw = (b / PI) * stripW;
+      const t = a;
+      const half = t * 0.5;
+      const cosH = Math.cos(half);
+      const sinH = Math.sin(half);
+      const dbw = stripW / PI;
+      _eu.set(
+        -bw * 0.5 * sinH * Math.cos(t) - (R + bw * cosH) * Math.sin(t),
+        -bw * 0.5 * sinH * Math.sin(t) + (R + bw * cosH) * Math.cos(t),
+        bw * 0.5 * cosH,
+      );
+      _ev.set(
+        dbw * cosH * Math.cos(t),
+        dbw * cosH * Math.sin(t),
+        dbw * sinH,
+      );
+      _eu.normalize();
+      _ev.normalize();
+      _n.crossVectors(_eu, _ev).normalize();
+      _eT.copy(_eu);
+      _eP.copy(_ev);
+    },
     wrap(body) {
       if (body.theta > PI) { body.theta -= TWO_PI; }
       else if (body.theta < -PI) { body.theta += TWO_PI; }
-      if (body.phi > 25) { body.phi -= 50; }
-      else if (body.phi < -25) { body.phi += 50; }
+      if (body.phi > PI) { body.phi -= TWO_PI; }
+      else if (body.phi < -PI) { body.phi += TWO_PI; }
     },
   },
 ];
@@ -507,13 +533,13 @@ function pointsToGeo(pts) {
 
 function buildArenaGrid() {
   const grid = new THREE.Group();
-  const isMobius = SHAPE.name === 'MOBIUS';
-  const matDim = new THREE.LineBasicMaterial({color: isMobius ? 0x0a3318 : 0x14404d, transparent: true, opacity: 0.6});
-  const matPrime = new THREE.LineBasicMaterial({color: isMobius ? 0x1a5c2e : 0x2c6f80, transparent: true, opacity: 0.8});
-  const matEq = new THREE.LineBasicMaterial({color: isMobius ? 0x2a8c44 : 0x3d95a8, transparent: true, opacity: 0.85});
+  const isGreen = SHAPE.name === 'MOBIUS' || SHAPE.uHalf === PLANE_HALF;
+  const matDim = new THREE.LineBasicMaterial({color: isGreen ? 0x0a3318 : 0x14404d, transparent: true, opacity: 0.6});
+  const matPrime = new THREE.LineBasicMaterial({color: isGreen ? 0x1a5c2e : 0x2c6f80, transparent: true, opacity: 0.8});
+  const matEq = new THREE.LineBasicMaterial({color: isGreen ? 0x2a8c44 : 0x3d95a8, transparent: true, opacity: 0.85});
 
-  const uCount = 16;
-  const vCount = 8;
+  const uCount = isGreen ? 24 : 16;
+  const vCount = isGreen ? 16 : 8;
   const uHalf = SHAPE.uHalf;
   const vMin = -SHAPE.vHalf;
   const vMax = SHAPE.vHalf;
@@ -555,7 +581,7 @@ const QUADRANT_COLORS = [0x3ad6ff, 0x3dffa5, 0xff9d3d, 0xc14dff];
 
 function quadrantColor(a, b) {
   if (!G.colorMode) { return 0x556666; }
-  if (SHAPE.name === 'MOBIUS') { return 0x3dffa5; }
+  if (SHAPE.uHalf === PLANE_HALF || SHAPE.name === 'MOBIUS') { return 0x3dffa5; }
   const north = b >= 0;
   const east = SHAPE.uHalf === PLANE_HALF ? a >= 0 : Math.cos(a) >= 0;
   if (north) { return east ? QUADRANT_COLORS[0] : QUADRANT_COLORS[1]; }
@@ -599,14 +625,15 @@ function buildQuadrantMesh(u0, u1, v0, v1, color) {
 
 function buildQuadrants() {
   const group = new THREE.Group();
-  if (SHAPE.name === 'MOBIUS') { return group; }
   const h = SHAPE.uHalf;
   const vh = SHAPE.vHalf;
   const mono = !G.colorMode;
-  const c0 = mono ? 0x556666 : QUADRANT_COLORS[0];
-  const c1 = mono ? 0x556666 : QUADRANT_COLORS[1];
-  const c2 = mono ? 0x556666 : QUADRANT_COLORS[2];
-  const c3 = mono ? 0x556666 : QUADRANT_COLORS[3];
+  const planeLike = SHAPE.uHalf === PLANE_HALF || SHAPE.name === 'MOBIUS';
+  const green = 0x3dffa5;
+  const c0 = mono ? 0x556666 : planeLike ? green : QUADRANT_COLORS[0];
+  const c1 = mono ? 0x556666 : planeLike ? green : QUADRANT_COLORS[1];
+  const c2 = mono ? 0x556666 : planeLike ? green : QUADRANT_COLORS[2];
+  const c3 = mono ? 0x556666 : planeLike ? green : QUADRANT_COLORS[3];
   const op = mono ? 0.08 : 0.32;
   group.add(buildQuadrantMesh(-h, 0, 0, vh, c0));
   group.add(buildQuadrantMesh(0, h, 0, vh, c1));
@@ -1178,13 +1205,6 @@ function update(dt) {
       G.vTheta += Math.sin(G.heading) * ACCEL * amt * dt * SHAPE.speed;
       G.vPhi += Math.cos(G.heading) * ACCEL * amt * dt * SHAPE.speed;
     }
-
-    if (SHAPE.name === 'MOBIUS') {
-      const kbQ = !!keys.q;
-      const kbE = !!keys.e;
-      if (kbQ) { G.vPhi -= ACCEL * 0.7 * dt; }
-      if (kbE) { G.vPhi += ACCEL * 0.7 * dt; }
-    }
     const spd = Math.hypot(G.vTheta, G.vPhi);
     const speedMul = G.speedTimer > 0 ? 1.8 : 1;
     const maxV = MAX_VEL * SHAPE.speed * speedMul;
@@ -1192,14 +1212,9 @@ function update(dt) {
       G.vTheta *= maxV / spd;
       G.vPhi *= maxV / spd;
     }
-    if (SHAPE.name === 'MOBIUS') {
-      G.vTheta *= Math.exp(-DRAG * dt);
-      G.vPhi *= Math.exp(-0.001 * dt);
-    } else {
-      const damp = Math.exp(-DRAG * dt);
-      G.vTheta *= damp;
-      G.vPhi *= damp;
-    }
+    const damp = SHAPE.name === 'MOBIUS' ? Math.exp(-0.04 * dt) : Math.exp(-DRAG * dt);
+    G.vTheta *= damp;
+    G.vPhi *= damp;
 
     G.theta += G.vTheta * dt;
     G.phi += G.vPhi * dt;
