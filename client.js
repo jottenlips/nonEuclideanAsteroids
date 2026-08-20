@@ -657,7 +657,7 @@ function makeRemoteShipMesh(colorIdx) {
   return group;
 }
 
-async function mpCreateRoom(name) {
+function mpCreateRoom(name) {
   MP.role = 'host';
   MP.playerName = name;
   const pc = new RTCPeerConnection({iceServers: [{urls: 'stun:stun.l.google.com:19302'}]});
@@ -667,14 +667,15 @@ async function mpCreateRoom(name) {
   dc.onopen = () => { MP.connected = true; updateMpIndicator(); };
   dc.onclose = () => { MP.connected = false; updateMpIndicator(); };
   dc.onmessage = (e) => { const m = JSON.parse(e.data); if (m.t === 'i') { MP.remoteInput = m; MP.remoteInput.name = m.n; } };
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  await gatherICE(pc);
-  const url = location.origin + location.pathname + '#room=' + encodeSDP(pc.localDescription);
-  showWaitingUI(url, name);
+  return pc.createOffer().then(offer => pc.setLocalDescription(offer))
+    .then(() => gatherICE(pc))
+    .then(() => {
+      const url = location.origin + location.pathname + '#room=' + encodeSDP(pc.localDescription);
+      showWaitingUI(url, name);
+    });
 }
 
-async function mpJoinRoom(encoded, name) {
+function mpJoinRoom(encoded, name) {
   MP.role = 'client';
   MP.playerName = name;
   const pc = new RTCPeerConnection({iceServers: [{urls: 'stun:stun.l.google.com:19302'}]});
@@ -685,16 +686,16 @@ async function mpJoinRoom(encoded, name) {
     e.channel.onclose = () => { MP.connected = false; updateMpIndicator(); };
     e.channel.onmessage = (e) => handleClientMessage(JSON.parse(e.data));
   };
-  await pc.setRemoteDescription(decodeSDP(encoded));
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  await gatherICE(pc);
-  showAnswerUI(encodeSDP(pc.localDescription), name);
+  return pc.setRemoteDescription(decodeSDP(encoded))
+    .then(() => pc.createAnswer())
+    .then(answer => pc.setLocalDescription(answer))
+    .then(() => gatherICE(pc))
+    .then(() => showAnswerUI(encodeSDP(pc.localDescription), name));
 }
 
-async function mpAcceptAnswer(encoded) {
-  await MP.pc.setRemoteDescription(decodeSDP(encoded));
-  hideModal();
+function mpAcceptAnswer(encoded) {
+  return MP.pc.setRemoteDescription(decodeSDP(encoded))
+    .then(() => hideModal());
 }
 
 function sendHostState() {
@@ -2131,13 +2132,13 @@ function showCreateModal() {
   );
   const btn = box.querySelector('#mp-create-btn');
   btn.style.pointerEvents = 'auto';
-  btn.addEventListener('pointerdown', async (e) => {
+  btn.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     e.stopPropagation();
     const n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
     btn.textContent = 'CREATING...';
     btn.style.opacity = '0.6';
-    await mpCreateRoom(n);
+    mpCreateRoom(n);
   }, true);
   box.querySelector('#mp-name-input').focus();
   box.querySelector('#mp-name-input').select();
@@ -2189,7 +2190,7 @@ function showWaitingUI(url, name) {
   });
   const connectBtn = box.querySelector('#mp-connect-btn');
   connectBtn.style.pointerEvents = 'auto';
-  connectBtn.addEventListener('pointerdown', async (e) => {
+  connectBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     e.stopPropagation();
     const code = box.querySelector('#mp-answer-input').value.trim();
@@ -2200,13 +2201,13 @@ function showWaitingUI(url, name) {
     }
     connectBtn.textContent = 'CONNECTING...';
     connectBtn.style.opacity = '0.6';
-    try { await mpAcceptAnswer(code); } catch (err) {
+    mpAcceptAnswer(code).catch(function() {
       connectBtn.textContent = 'CONNECT';
       connectBtn.style.opacity = '1';
       box.querySelector('#mp-answer-input').style.borderColor = 'rgba(255,94,94,0.8)';
       box.querySelector('#mp-answer-input').value = '';
       box.querySelector('#mp-answer-input').placeholder = 'Invalid code — ask your friend to send it again';
-    }
+    });
   });
   // Auto-copy the URL to clipboard
   navigator.clipboard.writeText(url).catch(() => {});
@@ -2262,17 +2263,17 @@ function showJoinModal(encoded) {
   );
   const joinBtn = box.querySelector('#mp-join-btn');
   joinBtn.style.pointerEvents = 'auto';
-  joinBtn.addEventListener('pointerdown', async (e) => {
+  joinBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     e.stopPropagation();
     const n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
     joinBtn.textContent = 'JOINING...';
     joinBtn.style.opacity = '0.6';
-    try { await mpJoinRoom(encoded, n); } catch (err) {
+    mpJoinRoom(encoded, n).catch(function() {
       joinBtn.textContent = 'JOIN GAME';
       joinBtn.style.opacity = '1';
       box.querySelector('#mp-name-input').style.borderColor = 'rgba(255,94,94,0.8)';
-    }
+    });
   });
   box.querySelector('#mp-name-input').focus();
   box.querySelector('#mp-name-input').select();
