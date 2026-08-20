@@ -793,7 +793,7 @@ function ensureRemotePlayer(p) {
   MP.remotePlayers[p.n] = {name: p.n, theta: p.θ, phi: p.φ, heading: p.h, bank: p.b, score: p.s, lives: p.l, respawnTimer: p.v ? 0 : 999, shieldHits: p.sh || 0, mesh};
 }
 
-function processRemoteInput() {
+function processRemoteInput(dt) {
   if (MP.role !== 'host' || !MP.remoteInput || !MP.remoteInput.t) return;
   const inp = MP.remoteInput;
   const name = inp.n || 'PLAYER 2';
@@ -808,7 +808,6 @@ function processRemoteInput() {
     };
   }
   const rp = MP.remotePlayers[name];
-  const dt = 1 / 15;
   if (rp.respawnTimer > 0) {
     rp.respawnTimer -= dt;
     if (rp.respawnTimer <= 0) {
@@ -1632,6 +1631,55 @@ function update(dt) {
 
   if (MP.role === 'client') {
     sendClientInput();
+    if (G.respawnTimer > 0) {
+      G.respawnTimer -= dt;
+      if (G.respawnTimer <= 0) { respawnShip(); }
+    }
+    if (G.invuln > 0) { G.invuln -= dt; }
+    const shipAlive = G.respawnTimer <= 0;
+    if (shipAlive) {
+      const kbLeft = !!(keys.ArrowLeft || keys.a);
+      const kbRight = !!(keys.ArrowRight || keys.d);
+      const kbUp = !!(keys.ArrowUp || keys.w);
+      const left = kbLeft || joy.turn < -0.12;
+      const right = kbRight || joy.turn > 0.12;
+      const up = kbUp || joy.thrust > 0.12;
+      if (left) {
+        const amt = kbLeft ? 1 : Math.min(1, -joy.turn);
+        G.heading -= TURN_RATE * amt * dt;
+        G.targetBank = -0.5 * amt;
+      } else if (right) {
+        const amt = kbRight ? 1 : Math.min(1, joy.turn);
+        G.heading += TURN_RATE * amt * dt;
+        G.targetBank = 0.5 * amt;
+      } else { G.targetBank = 0; }
+      G.heading = wrapAngle(G.heading);
+      G.bank += (G.targetBank - G.bank) * Math.min(1, dt * 7);
+      if (up) {
+        const amt = kbUp ? 1 : Math.min(1, joy.thrust);
+        G.vTheta += Math.sin(G.heading) * ACCEL * amt * dt * SHAPE.speed;
+        G.vPhi += Math.cos(G.heading) * ACCEL * amt * dt * SHAPE.speed;
+      }
+      const spd = Math.hypot(G.vTheta, G.vPhi);
+      const maxV = MAX_VEL * SHAPE.speed;
+      if (spd > maxV) { G.vTheta *= maxV / spd; G.vPhi *= maxV / spd; }
+      const damp = SHAPE.name === 'MOBIUS' ? Math.exp(-0.04 * dt) : Math.exp(-DRAG * dt);
+      G.vTheta *= damp; G.vPhi *= damp;
+      G.theta += G.vTheta * dt;
+      G.phi += G.vPhi * dt;
+      wrapBody(G);
+      G.fireCd -= dt;
+      if (keys[' '] && G.fireCd <= 0) {
+        fireBullet();
+        G.fireCd = G.rapidTimer > 0 ? FIRE_COOLDOWN / 3 : FIRE_COOLDOWN;
+      }
+      placeOriented(shipMesh, G);
+      engineMesh.visible = !!up;
+      const blink = G.invuln > 0 && Math.floor(G.invuln * 8) % 2 === 0;
+      shipMesh.visible = !blink;
+    } else {
+      shipMesh.visible = false;
+    }
     updateHudOverlay();
     return;
   }
@@ -1738,9 +1786,9 @@ function update(dt) {
   updateHudOverlay();
 
   if (MP.role === 'host') {
-    processRemoteInput();
     MP.syncTimer += dt;
     if (MP.syncTimer >= MP.SYNC_RATE) {
+      processRemoteInput(MP.syncTimer);
       sendHostState();
       MP.syncTimer = 0;
     }
