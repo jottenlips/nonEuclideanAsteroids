@@ -1,0 +1,11 @@
+{
+  "name": "ne-asteroids-signaling",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@ampt/sdk": "latest",
+    "@ampt/data": "latest",
+    "express": "^4.18.0",
+    "cors": "^2.8.5"
+  }
+}

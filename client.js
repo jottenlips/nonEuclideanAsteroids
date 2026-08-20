@@ -55,7 +55,7 @@ const POWERUP_PICKUP_DIST = 5;      // world units
 
 const MATRIX_SHIPS = ['NEBUCHEZZAR','LOGOS','OSIRIS','ICARUS','VIGILANT','NOVALIS','MJOLNIR','DORA','IRONSIDE','WOLFHOUND'];
 const MP_COLORS = [0xaef4f4,0x5eff5e,0xff5eff,0xffa500,0x5e9eff];
-const MP = {role:null,pc:null,dc:null,connected:false,playerName:'',remotePlayers:{},syncTimer:0,SYNC_RATE:1/15,remoteInput:{name:''}};
+const MP = {role:null,pc:null,dc:null,connected:false,playerName:'',roomCode:'',remotePlayers:{},syncTimer:0,SYNC_RATE:1/15,remoteInput:{name:''}};
 
 // ---------------------------------------------------------------------------
 // Arena shape registry
@@ -657,9 +657,12 @@ function makeRemoteShipMesh(colorIdx) {
   return group;
 }
 
-function mpCreateRoom(name) {
+var SIGNAL_URL = 'https://ne-asteroids-signal.ampt.app';
+
+function mpCreateRoom(roomName, name) {
   MP.role = 'host';
   MP.playerName = name;
+  MP.roomCode = roomName;
   const pc = new RTCPeerConnection({iceServers: [{urls: 'stun:stun.l.google.com:19302'}]});
   MP.pc = pc;
   const dc = pc.createDataChannel('game', {ordered: false, maxRetransmits: 0});
@@ -670,32 +673,68 @@ function mpCreateRoom(name) {
   return pc.createOffer().then(offer => pc.setLocalDescription(offer))
     .then(() => gatherICE(pc))
     .then(() => {
-      const url = location.origin + location.pathname + '#room=' + encodeSDP(pc.localDescription);
-      showWaitingUI(url, name);
+      return fetch(SIGNAL_URL + '/api/rooms', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ offer: JSON.stringify(pc.localDescription), room: roomName, name: name }),
+      });
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      MP.roomCode = data.code;
+      showWaitingUI(data.code, name);
+      mpPollForAnswer(data.code);
     });
 }
 
-function mpJoinRoom(encoded, name) {
+function mpPollForAnswer(roomCode) {
+  var pollCount = 0;
+  var maxPoll = 600; // 5 minutes at 0.5s intervals
+  var poll = function() {
+    if (MP.connected || pollCount >= maxPoll) return;
+    pollCount++;
+    fetch(SIGNAL_URL + '/api/rooms/' + roomCode + '/answer')
+      .then(r => r.json())
+      .then(data => {
+        if (data.answer) {
+          MP.pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(data.answer)))
+            .then(() => hideModal());
+        } else {
+          setTimeout(poll, 500);
+        }
+      })
+      .catch(() => setTimeout(poll, 1000));
+  };
+  setTimeout(poll, 500);
+}
+
+function mpJoinRoom(roomCode, name) {
   MP.role = 'client';
   MP.playerName = name;
+  MP.roomCode = roomCode;
   const pc = new RTCPeerConnection({iceServers: [{urls: 'stun:stun.l.google.com:19302'}]});
   MP.pc = pc;
   pc.ondatachannel = (e) => {
     MP.dc = e.channel;
-    e.channel.onopen = () => { MP.connected = true; updateMpIndicator(); };
+    e.channel.onopen = () => { MP.connected = true; updateMpIndicator(); hideModal(); };
     e.channel.onclose = () => { MP.connected = false; updateMpIndicator(); };
     e.channel.onmessage = (e) => handleClientMessage(JSON.parse(e.data));
   };
-  return pc.setRemoteDescription(decodeSDP(encoded))
+  return fetch(SIGNAL_URL + '/api/rooms/' + roomCode)
+    .then(r => { if (!r.ok) throw new Error('room not found'); return r.json(); })
+    .then(data => pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(data.offer))))
     .then(() => pc.createAnswer())
     .then(answer => pc.setLocalDescription(answer))
     .then(() => gatherICE(pc))
-    .then(() => showAnswerUI(encodeSDP(pc.localDescription), name));
-}
-
-function mpAcceptAnswer(encoded) {
-  return MP.pc.setRemoteDescription(decodeSDP(encoded))
-    .then(() => hideModal());
+    .then(() => {
+      return fetch(SIGNAL_URL + '/api/rooms/' + roomCode + '/answer', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ answer: JSON.stringify(pc.localDescription) }),
+      });
+    })
+    .then(() => showJoiningUI(name));
 }
 
 function sendHostState() {
@@ -2064,10 +2103,10 @@ function buildInviteButton() {
 function updateMpIndicator() {
   if (!mpIndicatorEl) return;
   if (MP.connected) {
-    mpIndicatorEl.textContent = (MP.role === 'host' ? 'HOSTED' : 'CONNECTED');
+    mpIndicatorEl.textContent = (MP.role === 'host' ? 'HOST' : 'CONNECTED') + (MP.roomCode ? ' \u00B7 ' + MP.roomCode : '');
     mpIndicatorEl.style.color = '#5eff5e';
   } else if (MP.role) {
-    mpIndicatorEl.textContent = 'CONNECTING...';
+    mpIndicatorEl.textContent = 'CONNECTING...' + (MP.roomCode ? ' \u00B7 ' + MP.roomCode : '');
     mpIndicatorEl.style.color = '#ffe45e';
   } else {
     mpIndicatorEl.textContent = '';
@@ -2121,155 +2160,117 @@ const LABEL = 'font-size:11px;color:rgba(234,255,255,0.5);margin-bottom:6px;';
 const HINT = 'margin-top:14px;text-align:center;font-size:11px;color:rgba(234,255,255,0.4);line-height:1.6;';
 
 function showCreateModal() {
-  const name = randomMatrixName();
-  const box = showModal(
-    '<div style="text-align:center;margin-bottom:18px;font-size:14px;letter-spacing:2px;color:#5eff5e;">MULTIPLAYER</div>' +
-    '<div style="margin-bottom:12px;font-size:12px;color:#eaffff;">' +
-      '<span style="' + STEP_ACTIVE + '">1</span>Name your ship</div>' +
-    '<input id="mp-name-input" type="text" value="' + name + '" maxlength="20" style="' + INPUT_STYLE + '" />' +
+  var shipName = randomMatrixName();
+  var roomName = randomMatrixName().replace(/\s/g, '');
+  var box = showModal(
+    '<div style="text-align:center;margin-bottom:18px;font-size:14px;letter-spacing:2px;color:#5eff5e;">HOST A ROOM</div>' +
+    '<div style="margin-bottom:8px;font-size:12px;color:#eaffff;">' +
+      '<span style="' + STEP_ACTIVE + '">1</span>Room name</div>' +
+    '<input id="mp-room-input" type="text" value="' + roomName + '" maxlength="16" ' +
+    'style="' + INPUT_STYLE + 'margin-bottom:14px;" />' +
+    '<div style="margin-bottom:8px;font-size:12px;color:#eaffff;">' +
+      '<span style="' + STEP_ACTIVE + '">2</span>Your ship name</div>' +
+    '<input id="mp-name-input" type="text" value="' + shipName + '" maxlength="20" style="' + INPUT_STYLE + '" />' +
     '<div id="mp-create-btn" style="' + BTN_GREEN + '">HOST A ROOM</div>' +
-    '<div style="' + HINT + '">You\'ll get a link to send to a friend.<br>Works on any device — no account needed.</div>'
+    '<div style="' + HINT + '">Share the link with a friend.<br>Works on any device — no account needed.</div>'
   );
-  const btn = box.querySelector('#mp-create-btn');
+  var btn = box.querySelector('#mp-create-btn');
   btn.style.pointerEvents = 'auto';
-  btn.addEventListener('pointerdown', (e) => {
+  btn.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    const n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
+    var r = box.querySelector('#mp-room-input').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    var n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
+    if (r.length < 3) {
+      box.querySelector('#mp-room-input').style.borderColor = 'rgba(255,94,94,0.8)';
+      return;
+    }
     btn.textContent = 'CREATING...';
     btn.style.opacity = '0.6';
-    mpCreateRoom(n);
+    mpCreateRoom(r, n);
   }, true);
-  box.querySelector('#mp-name-input').focus();
-  box.querySelector('#mp-name-input').select();
+  box.querySelector('#mp-room-input').focus();
+  box.querySelector('#mp-room-input').select();
 }
 
-function showWaitingUI(url, name) {
-  const box = showModal(
+function showWaitingUI(roomCode, name) {
+  var shareUrl = location.origin + location.pathname + '#code=' + roomCode;
+  var box = showModal(
     '<div style="text-align:center;margin-bottom:18px;font-size:14px;letter-spacing:2px;color:#5eff5e;">' + name + '</div>' +
     '<div style="margin-bottom:12px;font-size:12px;color:#eaffff;">' +
-      '<span style="' + STEP_DONE + '">&#10003;</span>Room created</div>' +
+      '<span style="' + STEP_DONE + '">&#10003;</span>Room <b>' + roomCode + '</b> created</div>' +
     '<div style="margin-bottom:12px;font-size:12px;color:#eaffff;">' +
       '<span style="' + STEP_ACTIVE + '">2</span>Send this link to your friend</div>' +
     '<div style="position:relative;">' +
-    '<input id="mp-url" type="text" readonly value="' + url + '" ' +
-    'style="width:100%;box-sizing:border-box;padding:8px 12px;font-family:monospace;font-size:9px;' +
+    '<input id="mp-url" type="text" readonly value="' + shareUrl + '" ' +
+    'style="width:100%;box-sizing:border-box;padding:8px 12px;font-family:monospace;font-size:11px;' +
     'background:rgba(0,0,0,0.4);border:1px solid rgba(46,107,122,0.5);border-radius:6px;' +
     'color:#eaffff;letter-spacing:0.5px;outline:none;" />' +
     '<div id="mp-copy-btn" style="position:absolute;right:4px;top:4px;bottom:4px;padding:0 10px;' +
     'cursor:pointer;font-size:10px;letter-spacing:1px;color:#030c10;background:#5eff5e;' +
     'border-radius:4px;display:flex;align-items:center;">COPY</div>' +
     '</div>' +
-    '<div id="mp-copy-status" style="margin-top:8px;text-align:center;font-size:11px;color:#5eff5e;min-height:16px;">Link copied to clipboard!</div>' +
+    '<div id="mp-copy-status" style="margin-top:8px;text-align:center;font-size:11px;color:#5eff5e;min-height:16px;">Link copied!</div>' +
     '<div style="margin-top:18px;font-size:12px;color:#eaffff;">' +
-      '<span id="mp-step3-num" style="' + STEP_WAIT + '">3</span>Paste their answer code</div>' +
-    '<textarea id="mp-answer-input" rows="3" placeholder="Waiting for friend to join..." ' +
-    'style="width:100%;box-sizing:border-box;padding:8px 12px;font-family:monospace;font-size:10px;' +
-    'background:rgba(0,0,0,0.4);border:1px solid rgba(46,107,122,0.5);border-radius:6px;' +
-    'color:#eaffff;letter-spacing:0.5px;outline:none;resize:none;margin-top:6px;"></textarea>' +
-    '<div id="mp-connect-btn" style="' + BTN_BLUE + '">CONNECT</div>' +
-    '<div style="' + HINT + '">Copy the link, text it to your friend,<br>then paste the code they send back.</div>'
+      '<span id="mp-step3-num" style="' + STEP_ACTIVE + '">3</span>Waiting for friend to join...</div>' +
+    '<div id="mp-wait-status" style="margin-top:8px;text-align:center;font-size:11px;color:#ffe45e;min-height:16px;">Searching for players...</div>' +
+    '<div style="' + HINT + '">The game starts automatically<br>when your friend connects.</div>'
   );
-  const copyBtn = box.querySelector('#mp-copy-btn');
+  var copyBtn = box.querySelector('#mp-copy-btn');
   copyBtn.style.pointerEvents = 'auto';
-  copyBtn.addEventListener('pointerdown', (e) => {
+  copyBtn.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    navigator.clipboard.writeText(url).then(() => {
+    navigator.clipboard.writeText(shareUrl).then(function() {
       copyBtn.textContent = 'COPIED!';
-      box.querySelector('#mp-copy-status').textContent = 'Link copied to clipboard!';
-      setTimeout(() => { copyBtn.textContent = 'COPY'; }, 1500);
-    }).catch(() => {
-      const inp = box.querySelector('#mp-url');
+      box.querySelector('#mp-copy-status').textContent = 'Link copied!';
+      setTimeout(function() { copyBtn.textContent = 'COPY'; }, 1500);
+    }).catch(function() {
+      var inp = box.querySelector('#mp-url');
       inp.select();
       document.execCommand('copy');
       copyBtn.textContent = 'COPIED!';
-      box.querySelector('#mp-copy-status').textContent = 'Link copied to clipboard!';
-      setTimeout(() => { copyBtn.textContent = 'COPY'; }, 1500);
+      setTimeout(function() { copyBtn.textContent = 'COPY'; }, 1500);
     });
   });
-  const connectBtn = box.querySelector('#mp-connect-btn');
-  connectBtn.style.pointerEvents = 'auto';
-  connectBtn.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const code = box.querySelector('#mp-answer-input').value.trim();
-    if (!code) {
-      box.querySelector('#mp-answer-input').style.borderColor = 'rgba(255,94,94,0.8)';
-      box.querySelector('#mp-answer-input').placeholder = 'Paste the code your friend sent you...';
-      return;
-    }
-    connectBtn.textContent = 'CONNECTING...';
-    connectBtn.style.opacity = '0.6';
-    mpAcceptAnswer(code).catch(function() {
-      connectBtn.textContent = 'CONNECT';
-      connectBtn.style.opacity = '1';
-      box.querySelector('#mp-answer-input').style.borderColor = 'rgba(255,94,94,0.8)';
-      box.querySelector('#mp-answer-input').value = '';
-      box.querySelector('#mp-answer-input').placeholder = 'Invalid code — ask your friend to send it again';
-    });
-  });
-  // Auto-copy the URL to clipboard
-  navigator.clipboard.writeText(url).catch(() => {});
+  navigator.clipboard.writeText(shareUrl).catch(function() {});
 }
 
-function showAnswerUI(answerCode, name) {
-  const box = showModal(
+function showJoiningUI(name) {
+  showModal(
     '<div style="text-align:center;margin-bottom:18px;font-size:14px;letter-spacing:2px;color:#5eff5e;">' + name + '</div>' +
     '<div style="margin-bottom:12px;font-size:12px;color:#eaffff;">' +
       '<span style="' + STEP_DONE + '">&#10003;</span>Joined room</div>' +
     '<div style="margin-bottom:12px;font-size:12px;color:#eaffff;">' +
-      '<span style="' + STEP_ACTIVE + '">2</span>Send this code to the host</div>' +
-    '<textarea id="mp-answer-code" rows="4" readonly ' +
-    'style="width:100%;box-sizing:border-box;padding:8px 12px;font-family:monospace;font-size:9px;' +
-    'background:rgba(0,0,0,0.4);border:1px solid rgba(46,107,122,0.5);border-radius:6px;' +
-    'color:#eaffff;letter-spacing:0.5px;outline:none;resize:none;">' + answerCode + '</textarea>' +
-    '<div id="mp-copy-answer" style="' + BTN_GREEN + '">COPY CODE &amp; SHARE</div>' +
-    '<div id="mp-copy-answer-status" style="margin-top:8px;text-align:center;font-size:11px;color:#5eff5e;min-height:16px;">Code copied to clipboard!</div>' +
-    '<div style="' + HINT + '">Send this code to the host<br>(text, email, carrier pigeon, etc.)<br><br>The game will start once the host pastes your code.</div>'
+      '<span style="' + STEP_ACTIVE + '">2</span>Connecting to host...</div>' +
+    '<div style="margin-top:18px;text-align:center;">' +
+    '<div style="display:inline-block;width:20px;height:20px;border:2px solid #5eff5e;border-top-color:transparent;border-radius:50%;animation:mp-spin 0.8s linear infinite;"></div></div>' +
+    '<style>@keyframes mp-spin{to{transform:rotate(360deg)}}</style>' +
+    '<div style="' + HINT + '">The game starts automatically<br>once the host connects.</div>'
   );
-  const copyBtn = box.querySelector('#mp-copy-answer');
-  copyBtn.style.pointerEvents = 'auto';
-  copyBtn.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    navigator.clipboard.writeText(answerCode).then(() => {
-      copyBtn.textContent = 'COPIED!';
-      box.querySelector('#mp-copy-answer-status').textContent = 'Code copied to clipboard!';
-      setTimeout(() => { copyBtn.textContent = 'COPY CODE & SHARE'; }, 1500);
-    }).catch(() => {
-      box.querySelector('#mp-answer-code').select();
-      document.execCommand('copy');
-      copyBtn.textContent = 'COPIED!';
-      box.querySelector('#mp-copy-answer-status').textContent = 'Code copied to clipboard!';
-      setTimeout(() => { copyBtn.textContent = 'COPY CODE & SHARE'; }, 1500);
-    });
-  });
-  // Auto-copy answer code to clipboard
-  navigator.clipboard.writeText(answerCode).catch(() => {});
 }
 
-function showJoinModal(encoded) {
-  const name = randomMatrixName();
-  const box = showModal(
-    '<div style="text-align:center;margin-bottom:18px;font-size:14px;letter-spacing:2px;color:#5eff5e;">JOIN MULTIPLAYER</div>' +
+function showJoinModal(roomCode) {
+  var name = randomMatrixName();
+  var box = showModal(
+    '<div style="text-align:center;margin-bottom:18px;font-size:14px;letter-spacing:2px;color:#5eff5e;">JOIN ' + roomCode + '</div>' +
     '<div style="margin-bottom:4px;font-size:12px;color:rgba(234,255,255,0.6);line-height:1.5;">' +
       'A friend invited you to play.<br>Enter a ship name to join the game.</div>' +
     '<div style="margin-top:14px;margin-bottom:8px;font-size:12px;color:#eaffff;">' +
       '<span style="' + STEP_ACTIVE + '">1</span>Name your ship</div>' +
     '<input id="mp-name-input" type="text" value="' + name + '" maxlength="20" style="' + INPUT_STYLE + '" />' +
     '<div id="mp-join-btn" style="' + BTN_GREEN + '">JOIN GAME</div>' +
-    '<div style="' + HINT + '">After joining, you\'ll get a code to send back<br>to the host to finish connecting.</div>'
+    '<div style="' + HINT + '">The game starts automatically<br>once both players connect.</div>'
   );
-  const joinBtn = box.querySelector('#mp-join-btn');
+  var joinBtn = box.querySelector('#mp-join-btn');
   joinBtn.style.pointerEvents = 'auto';
-  joinBtn.addEventListener('pointerdown', (e) => {
+  joinBtn.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    const n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
+    var n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
     joinBtn.textContent = 'JOINING...';
     joinBtn.style.opacity = '0.6';
-    mpJoinRoom(encoded, n).catch(function() {
+    mpJoinRoom(roomCode, n).catch(function() {
       joinBtn.textContent = 'JOIN GAME';
       joinBtn.style.opacity = '1';
       box.querySelector('#mp-name-input').style.borderColor = 'rgba(255,94,94,0.8)';
@@ -2436,9 +2437,11 @@ function init(bundle, parent, options = {}) {
   buildMpIndicator();
 
   const hash = location.hash;
-  if (hash && hash.startsWith('#room=')) {
-    const encoded = hash.substring(6);
-    showJoinModal(encoded);
+  if (hash && hash.startsWith('#code=')) {
+    const roomCode = hash.substring(6).toUpperCase();
+    showJoinModal(roomCode);
+    history.replaceState(null, '', location.pathname + location.search);
+  } else if (hash && hash.startsWith('#room=')) {
     history.replaceState(null, '', location.pathname + location.search);
   }
 
