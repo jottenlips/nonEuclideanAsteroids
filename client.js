@@ -657,7 +657,7 @@ function makeRemoteShipMesh(colorIdx) {
   return group;
 }
 
-var SIGNAL_URL = 'https://ne-asteroids-signal.ampt.app';
+var SIGNAL_URL = 'https://fast-dev-sb030.ampt.app';
 
 function mpCreateRoom(roomName, name) {
   MP.role = 'host';
