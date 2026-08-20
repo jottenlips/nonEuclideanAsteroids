@@ -2048,19 +2048,32 @@ let mpModalEl = null;
 let mpIndicatorEl = null;
 
 function buildInviteButton() {
+  const wrap = document.createElement('div');
+  wrap.id = 'mp-invite-wrap';
+  wrap.style.cssText =
+    'position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:150;' +
+    'pointer-events:none;display:flex;align-items:center;gap:10px;';
+
   const btn = document.createElement('div');
   btn.id = 'mp-invite-btn';
   btn.innerText = 'INVITE';
   btn.style.cssText =
-    'position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:150;' +
     'pointer-events:auto;cursor:pointer;padding:8px 28px;' +
     'font-family:monospace;font-size:13px;letter-spacing:2px;color:#5eff5e;' +
     'background:rgba(3,12,16,0.7);border:1px solid rgba(94,255,94,0.4);' +
-    'border-radius:6px;transition:all 0.2s;';
+    'border-radius:6px;transition:all 0.2s;' +
+    '-webkit-user-select:none;user-select:none;touch-action:none;' +
+    '-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;';
+  btn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    Audio.unlock();
+    showCreateModal();
+  });
   btn.onmouseenter = () => { btn.style.borderColor = 'rgba(94,255,94,0.8)'; btn.style.color = '#fff'; };
   btn.onmouseleave = () => { btn.style.borderColor = 'rgba(94,255,94,0.4)'; btn.style.color = '#5eff5e'; };
-  btn.onclick = () => { Audio.unlock(); showCreateModal(); };
-  document.body.appendChild(btn);
+  wrap.appendChild(btn);
+  document.body.appendChild(wrap);
 }
 
 function updateMpIndicator() {
@@ -2101,11 +2114,22 @@ function showModal(html) {
     'border-radius:12px;padding:24px 32px;min-width:340px;max-width:520px;' +
     'font-family:monospace;color:#eaffff;';
   box.innerHTML = html;
+  box.addEventListener('pointerdown', e => e.stopPropagation());
   overlay.appendChild(box);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) hideModal(); });
+  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) { e.preventDefault(); e.stopPropagation(); hideModal(); } });
   document.body.appendChild(overlay);
   mpModalEl = overlay;
   return box;
+}
+
+function bindBtn(id, fn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.pointerEvents = 'auto';
+  el.style.touchAction = 'none';
+  el.style.userSelect = 'none';
+  el.style.webkitUserSelect = 'none';
+  el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fn(e); });
 }
 
 function hideModal() {
@@ -2132,10 +2156,10 @@ function showCreateModal() {
     '<div id="mp-create-btn" style="' + BTN_GREEN + '">HOST A ROOM</div>' +
     '<div style="' + HINT + '">You\'ll get a link to send to a friend.<br>Works on any device — no account needed.</div>'
   );
-  box.querySelector('#mp-create-btn').onclick = async () => {
+  bindBtn('mp-create-btn', async () => {
     const n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
     await mpCreateRoom(n);
-  };
+  });
   box.querySelector('#mp-name-input').focus();
   box.querySelector('#mp-name-input').select();
 }
@@ -2165,7 +2189,7 @@ function showWaitingUI(url, name) {
     '<div id="mp-connect-btn" style="' + BTN_BLUE + '">CONNECT</div>' +
     '<div style="' + HINT + '">Copy the link, text it to your friend,<br>then paste the code they send back.</div>'
   );
-  box.querySelector('#mp-copy-btn').onclick = () => {
+  bindBtn('mp-copy-btn', () => {
     navigator.clipboard.writeText(url).then(() => {
       box.querySelector('#mp-copy-btn').textContent = 'COPIED!';
       setTimeout(() => { box.querySelector('#mp-copy-btn').textContent = 'COPY'; }, 1500);
@@ -2176,8 +2200,8 @@ function showWaitingUI(url, name) {
       box.querySelector('#mp-copy-btn').textContent = 'COPIED!';
       setTimeout(() => { box.querySelector('#mp-copy-btn').textContent = 'COPY'; }, 1500);
     });
-  };
-  box.querySelector('#mp-connect-btn').onclick = async () => {
+  });
+  bindBtn('mp-connect-btn', async () => {
     const code = box.querySelector('#mp-answer-input').value.trim();
     if (!code) {
       box.querySelector('#mp-answer-input').style.borderColor = 'rgba(255,94,94,0.8)';
@@ -2193,7 +2217,7 @@ function showWaitingUI(url, name) {
       box.querySelector('#mp-answer-input').value = '';
       box.querySelector('#mp-answer-input').placeholder = 'Invalid code — ask your friend to send it again';
     }
-  };
+  });
 }
 
 function showAnswerUI(answerCode, name) {
@@ -2210,7 +2234,7 @@ function showAnswerUI(answerCode, name) {
     '<div id="mp-copy-answer" style="' + BTN_GREEN + '">COPY CODE &amp; SHARE</div>' +
     '<div style="' + HINT + '">Copy this code and send it to the host<br>(text, email, carrier pigeon, etc.)<br><br>The game will start once the host pastes your code.</div>'
   );
-  box.querySelector('#mp-copy-answer').onclick = () => {
+  bindBtn('mp-copy-answer', () => {
     navigator.clipboard.writeText(answerCode).then(() => {
       box.querySelector('#mp-copy-answer').textContent = 'COPIED!';
       setTimeout(() => { box.querySelector('#mp-copy-answer').textContent = 'COPY CODE & SHARE'; }, 1500);
@@ -2220,7 +2244,7 @@ function showAnswerUI(answerCode, name) {
       box.querySelector('#mp-copy-answer').textContent = 'COPIED!';
       setTimeout(() => { box.querySelector('#mp-copy-answer').textContent = 'COPY CODE & SHARE'; }, 1500);
     });
-  };
+  });
 }
 
 function showJoinModal(encoded) {
@@ -2235,7 +2259,7 @@ function showJoinModal(encoded) {
     '<div id="mp-join-btn" style="' + BTN_GREEN + '">JOIN GAME</div>' +
     '<div style="' + HINT + '">After joining, you\'ll get a code to send back<br>to the host to finish connecting.</div>'
   );
-  box.querySelector('#mp-join-btn').onclick = async () => {
+  bindBtn('mp-join-btn', async () => {
     const n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
     box.querySelector('#mp-join-btn').textContent = 'JOINING...';
     box.querySelector('#mp-join-btn').style.opacity = '0.6';
@@ -2244,7 +2268,7 @@ function showJoinModal(encoded) {
       box.querySelector('#mp-join-btn').style.opacity = '1';
       box.querySelector('#mp-name-input').style.borderColor = 'rgba(255,94,94,0.8)';
     }
-  };
+  });
   box.querySelector('#mp-name-input').focus();
   box.querySelector('#mp-name-input').select();
 }
