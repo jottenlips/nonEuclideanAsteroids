@@ -53,6 +53,10 @@ const POWERUP_SPAWN_INTERVAL = 6;   // s between spawn attempts
 const POWERUP_LIFETIME = 12;        // s before despawn
 const POWERUP_PICKUP_DIST = 5;      // world units
 
+const MATRIX_SHIPS = ['NEBUCHEZZAR','LOGOS','OSIRIS','ICARUS','VIGILANT','NOVALIS','MJOLNIR','DORA','IRONSIDE','WOLFHOUND'];
+const MP_COLORS = [0xaef4f4,0x5eff5e,0xff5eff,0xffa500,0x5e9eff];
+const MP = {role:null,pc:null,dc:null,connected:false,playerName:'',remotePlayers:{},syncTimer:0,SYNC_RATE:1/15,remoteInput:{name:''}};
+
 // ---------------------------------------------------------------------------
 // Arena shape registry
 // ---------------------------------------------------------------------------
@@ -617,6 +621,195 @@ function spawnDistOK(theta, phi) {
     }
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Multiplayer (WebRTC peer-to-peer)
+// ---------------------------------------------------------------------------
+
+function encodeSDP(desc) {
+  return btoa(JSON.stringify({type: desc.type, sdp: desc.sdp}))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function decodeSDP(str) {
+  const pad = str + '=='.slice(0, (4 - str.length % 4) % 4);
+  return new RTCSessionDescription(JSON.parse(atob(pad.replace(/-/g, '+').replace(/_/g, '/'))));
+}
+function gatherICE(pc) {
+  return new Promise(resolve => {
+    if (pc.iceGatheringState === 'complete') { resolve(); return; }
+    const check = () => { if (pc.iceGatheringState === 'complete') { pc.onicegatheringstatechange = null; resolve(); } };
+    pc.onicegatheringstatechange = check;
+    check();
+  });
+}
+function randomMatrixName() {
+  return MATRIX_SHIPS[Math.floor(Math.random() * MATRIX_SHIPS.length)];
+}
+
+function makeRemoteShipMesh(colorIdx) {
+  const mat = new THREE.LineBasicMaterial({color: MP_COLORS[(colorIdx + 1) % MP_COLORS.length], transparent: true, opacity: 0.95});
+  const edges = [[0,0,4.2,-3,0,-1],[0,0,4.2,3,0,-1],[-3,0,-1,0,0,-3.2],[3,0,-1,0,0,-3.2],[0,0,4.2,0,0,-3.2],[-3,0,-1,0,0,-0.8],[3,0,-1,0,0,-0.8],[0,0,-0.8,0,0,-3.2],[0,0,4.2,0,0,5.6],[-0.7,0,-3.2,0.7,0,-3.2]];
+  const pts = [];
+  for (const e of edges) { pts.push(new THREE.Vector3(e[0],e[1],e[2])); pts.push(new THREE.Vector3(e[3],e[4],e[5])); }
+  const group = new THREE.Group();
+  group.add(new THREE.LineSegments(pointsToGeo(pts), mat));
+  return group;
+}
+
+async function mpCreateRoom(name) {
+  MP.role = 'host';
+  MP.playerName = name;
+  const pc = new RTCPeerConnection({iceServers: [{urls: 'stun:stun.l.google.com:19302'}]});
+  MP.pc = pc;
+  const dc = pc.createDataChannel('game', {ordered: false, maxRetransmits: 0});
+  MP.dc = dc;
+  dc.onopen = () => { MP.connected = true; updateMpIndicator(); };
+  dc.onclose = () => { MP.connected = false; updateMpIndicator(); };
+  dc.onmessage = (e) => { const m = JSON.parse(e.data); if (m.t === 'i') { MP.remoteInput = m; MP.remoteInput.name = m.n; } };
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await gatherICE(pc);
+  const url = location.origin + location.pathname + '#room=' + encodeSDP(pc.localDescription);
+  showWaitingUI(url, name);
+}
+
+async function mpJoinRoom(encoded, name) {
+  MP.role = 'client';
+  MP.playerName = name;
+  const pc = new RTCPeerConnection({iceServers: [{urls: 'stun:stun.l.google.com:19302'}]});
+  MP.pc = pc;
+  pc.ondatachannel = (e) => {
+    MP.dc = e.channel;
+    e.channel.onopen = () => { MP.connected = true; updateMpIndicator(); };
+    e.channel.onclose = () => { MP.connected = false; updateMpIndicator(); };
+    e.channel.onmessage = (e) => handleClientMessage(JSON.parse(e.data));
+  };
+  await pc.setRemoteDescription(decodeSDP(encoded));
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  await gatherICE(pc);
+  showAnswerUI(encodeSDP(pc.localDescription), name);
+}
+
+async function mpAcceptAnswer(encoded) {
+  await MP.pc.setRemoteDescription(decodeSDP(encoded));
+  hideModal();
+}
+
+function sendHostState() {
+  if (!MP.dc || MP.dc.readyState !== 'open') return;
+  const ps = [{
+    n: MP.playerName, θ: G.theta, φ: G.phi, h: G.heading, b: G.bank,
+    s: G.score, l: G.lives, v: G.respawnTimer <= 0,
+    e: G.respawnTimer <= 0 && engineMesh && engineMesh.visible,
+    sh: G.shieldHits,
+  }];
+  for (const k in MP.remotePlayers) {
+    const r = MP.remotePlayers[k];
+    ps.push({
+      n: r.name, θ: r.theta, φ: r.phi, h: r.heading, b: r.bank,
+      s: r.score || 0, l: r.lives || START_LIVES, v: r.respawnTimer <= 0,
+      e: false, sh: r.shieldHits || 0,
+    });
+  }
+  MP.dc.send(JSON.stringify({
+    t: 's', ps,
+    as: asteroids.map(a => ({θ: a.theta, φ: a.phi, t: a.tier})),
+    w: G.wave, sh: SHAPE.name, st: G.status,
+    mt: {msg: G.msg, timer: G.msgTimer},
+  }));
+}
+
+function handleClientMessage(msg) {
+  if (msg.t === 's') {
+    for (const p of msg.ps) {
+      if (p.n === MP.playerName) {
+        G.theta = p.θ; G.phi = p.φ; G.heading = p.h; G.bank = p.b;
+        G.score = p.s; G.lives = p.l; G.shieldHits = p.sh;
+        shipMesh.visible = p.v;
+        if (engineMesh) engineMesh.visible = p.e;
+        if (p.v) placeOriented(shipMesh, G);
+      } else {
+        ensureRemotePlayer(p);
+        const rp = MP.remotePlayers[p.n];
+        rp.theta = p.θ; rp.phi = p.φ; rp.heading = p.h; rp.bank = p.b;
+        rp.respawnTimer = p.v ? 0 : 999;
+        rp.mesh.visible = p.v;
+        if (p.v) placeOriented(rp.mesh, rp);
+      }
+    }
+    G.wave = msg.w; G.status = msg.st;
+    if (msg.mt && msg.mt.timer > 0) { G.msg = msg.mt.msg; G.msgTimer = msg.mt.timer; }
+    updateHudOverlay();
+  }
+}
+
+function ensureRemotePlayer(p) {
+  if (MP.remotePlayers[p.n]) return;
+  const ci = Object.keys(MP.remotePlayers).length;
+  const mesh = makeRemoteShipMesh(ci);
+  scene.add(mesh);
+  MP.remotePlayers[p.n] = {name: p.n, theta: p.θ, phi: p.φ, heading: p.h, bank: p.b, score: p.s, lives: p.l, respawnTimer: p.v ? 0 : 999, shieldHits: p.sh || 0, mesh};
+}
+
+function processRemoteInput() {
+  if (MP.role !== 'host' || !MP.remoteInput || !MP.remoteInput.t) return;
+  const inp = MP.remoteInput;
+  const name = inp.n || 'PLAYER 2';
+  if (!MP.remotePlayers[name]) {
+    const ci = Object.keys(MP.remotePlayers).length;
+    const mesh = makeRemoteShipMesh(ci);
+    scene.add(mesh);
+    MP.remotePlayers[name] = {
+      name, theta: 0, phi: 0.3, vTheta: 0, vPhi: 0, heading: 0.6, bank: 0,
+      targetBank: 0, score: 0, lives: START_LIVES, respawnTimer: 0,
+      invuln: INVULN_TIME, shieldHits: 0, mesh,
+    };
+  }
+  const rp = MP.remotePlayers[name];
+  const dt = 1 / 15;
+  if (rp.respawnTimer > 0) {
+    rp.respawnTimer -= dt;
+    if (rp.respawnTimer <= 0) {
+      rp.theta = 0; rp.phi = 0.3; rp.vTheta = 0; rp.vPhi = 0;
+      rp.heading = 0.6; rp.bank = 0; rp.invuln = INVULN_TIME;
+    }
+    rp.mesh.visible = false;
+    return;
+  }
+  if (rp.invuln > 0) rp.invuln -= dt;
+  if (inp.l) { rp.heading -= TURN_RATE * dt; rp.targetBank = -0.5; }
+  else if (inp.r) { rp.heading += TURN_RATE * dt; rp.targetBank = 0.5; }
+  else { rp.targetBank = 0; }
+  rp.heading = wrapAngle(rp.heading);
+  rp.bank += (rp.targetBank - rp.bank) * Math.min(1, dt * 7);
+  if (inp.u) {
+    rp.vTheta += Math.sin(rp.heading) * ACCEL * dt * SHAPE.speed;
+    rp.vPhi += Math.cos(rp.heading) * ACCEL * dt * SHAPE.speed;
+  }
+  const spd = Math.hypot(rp.vTheta, rp.vPhi);
+  const maxV = MAX_VEL * SHAPE.speed;
+  if (spd > maxV) { rp.vTheta *= maxV / spd; rp.vPhi *= maxV / spd; }
+  const damp = SHAPE.name === 'MOBIUS' ? Math.exp(-0.04 * dt) : Math.exp(-DRAG * dt);
+  rp.vTheta *= damp; rp.vPhi *= damp;
+  rp.theta += rp.vTheta * dt; rp.phi += rp.vPhi * dt;
+  wrapBody(rp);
+  const blink = rp.invuln > 0 && Math.floor(rp.invuln * 8) % 2 === 0;
+  rp.mesh.visible = !blink;
+  placeOriented(rp.mesh, rp);
+}
+
+function sendClientInput() {
+  if (!MP.dc || MP.dc.readyState !== 'open') return;
+  MP.dc.send(JSON.stringify({
+    t: 'i',
+    l: !!(keys.ArrowLeft || keys.a),
+    r: !!(keys.ArrowRight || keys.d),
+    u: !!(keys.ArrowUp || keys.w),
+    f: !!keys[' '],
+    n: MP.playerName,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1397,6 +1590,12 @@ function handleCollisions() {
 function update(dt) {
   if (dt <= 0) { return; }
 
+  if (MP.role === 'client') {
+    sendClientInput();
+    updateHudOverlay();
+    return;
+  }
+
   if (G.msgTimer > 0) {
     G.msgTimer -= dt;
     if (G.msgTimer <= 0) { G.msg = ''; }
@@ -1497,6 +1696,15 @@ function update(dt) {
   updatePowerups(dt);
   updateFx(dt);
   updateHudOverlay();
+
+  if (MP.role === 'host') {
+    processRemoteInput();
+    MP.syncTimer += dt;
+    if (MP.syncTimer >= MP.SYNC_RATE) {
+      sendHostState();
+      MP.syncTimer = 0;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1833,6 +2041,177 @@ function updateHudOverlay() {
 }
 
 // ---------------------------------------------------------------------------
+// Multiplayer UI
+// ---------------------------------------------------------------------------
+
+let mpModalEl = null;
+let mpIndicatorEl = null;
+
+function buildInviteButton() {
+  const btn = document.createElement('div');
+  btn.id = 'mp-invite-btn';
+  btn.innerText = 'INVITE';
+  btn.style.cssText =
+    'position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:150;' +
+    'pointer-events:auto;cursor:pointer;padding:8px 28px;' +
+    'font-family:monospace;font-size:13px;letter-spacing:2px;color:#5eff5e;' +
+    'background:rgba(3,12,16,0.7);border:1px solid rgba(94,255,94,0.4);' +
+    'border-radius:6px;transition:all 0.2s;';
+  btn.onmouseenter = () => { btn.style.borderColor = 'rgba(94,255,94,0.8)'; btn.style.color = '#fff'; };
+  btn.onmouseleave = () => { btn.style.borderColor = 'rgba(94,255,94,0.4)'; btn.style.color = '#5eff5e'; };
+  btn.onclick = () => { Audio.unlock(); showCreateModal(); };
+  document.body.appendChild(btn);
+}
+
+function updateMpIndicator() {
+  if (!mpIndicatorEl) return;
+  if (MP.connected) {
+    mpIndicatorEl.textContent = (MP.role === 'host' ? 'HOSTED' : 'CONNECTED');
+    mpIndicatorEl.style.color = '#5eff5e';
+  } else if (MP.role) {
+    mpIndicatorEl.textContent = 'CONNECTING...';
+    mpIndicatorEl.style.color = '#ffe45e';
+  } else {
+    mpIndicatorEl.textContent = '';
+  }
+}
+
+function buildMpIndicator() {
+  const el = document.createElement('div');
+  el.id = 'mp-indicator';
+  el.style.cssText =
+    'position:fixed;top:6px;right:12px;z-index:120;' +
+    'font-family:monospace;font-size:11px;letter-spacing:1px;color:#5eff5e;' +
+    'background:rgba(3,12,16,0.55);border:1px solid rgba(46,107,122,0.5);' +
+    'border-radius:6px;padding:3px 10px;white-space:nowrap;pointer-events:none;';
+  document.body.appendChild(el);
+  mpIndicatorEl = el;
+}
+
+function showModal(html) {
+  hideModal();
+  const overlay = document.createElement('div');
+  overlay.id = 'mp-modal';
+  overlay.style.cssText =
+    'position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;' +
+    'background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);';
+  const box = document.createElement('div');
+  box.style.cssText =
+    'background:rgba(3,12,16,0.95);border:1px solid rgba(46,107,122,0.6);' +
+    'border-radius:12px;padding:24px 32px;min-width:340px;max-width:520px;' +
+    'font-family:monospace;color:#eaffff;';
+  box.innerHTML = html;
+  overlay.appendChild(box);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) hideModal(); });
+  document.body.appendChild(overlay);
+  mpModalEl = overlay;
+  return box;
+}
+
+function hideModal() {
+  if (mpModalEl) { mpModalEl.remove(); mpModalEl = null; }
+}
+
+function showCreateModal() {
+  const name = randomMatrixName();
+  const box = showModal(
+    '<div style="text-align:center;margin-bottom:16px;font-size:14px;letter-spacing:2px;color:#5eff5e;">CREATE MULTIPLAYER ROOM</div>' +
+    '<div style="font-size:11px;color:rgba(234,255,255,0.5);margin-bottom:8px;">NAME YOUR SHIP</div>' +
+    '<input id="mp-name-input" type="text" value="' + name + '" maxlength="20" ' +
+    'style="width:100%;box-sizing:border-box;padding:8px 12px;font-family:monospace;font-size:13px;' +
+    'background:rgba(0,0,0,0.4);border:1px solid rgba(46,107,122,0.5);border-radius:6px;' +
+    'color:#eaffff;letter-spacing:1px;outline:none;text-transform:uppercase;" />' +
+    '<div id="mp-create-btn" style="margin-top:16px;text-align:center;padding:10px;cursor:pointer;' +
+    'font-size:12px;letter-spacing:2px;color:#030c10;background:#5eff5e;' +
+    'border-radius:6px;font-weight:700;">CREATE</div>'
+  );
+  box.querySelector('#mp-create-btn').onclick = async () => {
+    const n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
+    await mpCreateRoom(n);
+  };
+  box.querySelector('#mp-name-input').focus();
+  box.querySelector('#mp-name-input').select();
+}
+
+function showWaitingUI(url, name) {
+  const box = showModal(
+    '<div style="text-align:center;margin-bottom:16px;font-size:14px;letter-spacing:2px;color:#5eff5e;">' + name + '</div>' +
+    '<div style="font-size:11px;color:rgba(234,255,255,0.5);margin-bottom:8px;">SEND THIS LINK TO YOUR FRIEND</div>' +
+    '<div style="position:relative;">' +
+    '<input id="mp-url" type="text" readonly value="' + url + '" ' +
+    'style="width:100%;box-sizing:border-box;padding:8px 12px;font-family:monospace;font-size:10px;' +
+    'background:rgba(0,0,0,0.4);border:1px solid rgba(46,107,122,0.5);border-radius:6px;' +
+    'color:#eaffff;letter-spacing:0.5px;outline:none;" />' +
+    '<div id="mp-copy-btn" style="position:absolute;right:4px;top:4px;bottom:4px;padding:0 10px;' +
+    'cursor:pointer;font-size:10px;letter-spacing:1px;color:#030c10;background:#5eff5e;' +
+    'border-radius:4px;display:flex;align-items:center;">COPY</div>' +
+    '</div>' +
+    '<div style="margin-top:20px;font-size:11px;color:rgba(234,255,255,0.5);margin-bottom:8px;">PASTE THEIR ANSWER CODE BELOW</div>' +
+    '<textarea id="mp-answer-input" rows="3" placeholder="Paste answer code here..." ' +
+    'style="width:100%;box-sizing:border-box;padding:8px 12px;font-family:monospace;font-size:10px;' +
+    'background:rgba(0,0,0,0.4);border:1px solid rgba(46,107,122,0.5);border-radius:6px;' +
+    'color:#eaffff;letter-spacing:0.5px;outline:none;resize:none;"></textarea>' +
+    '<div id="mp-connect-btn" style="margin-top:12px;text-align:center;padding:10px;cursor:pointer;' +
+    'font-size:12px;letter-spacing:2px;color:#030c10;background:#5e9eff;' +
+    'border-radius:6px;font-weight:700;">CONNECT</div>'
+  );
+  box.querySelector('#mp-copy-btn').onclick = () => {
+    navigator.clipboard.writeText(url).then(() => {
+      box.querySelector('#mp-copy-btn').textContent = 'COPIED';
+      setTimeout(() => { box.querySelector('#mp-copy-btn').textContent = 'COPY'; }, 1500);
+    });
+  };
+  box.querySelector('#mp-connect-btn').onclick = async () => {
+    const code = box.querySelector('#mp-answer-input').value.trim();
+    if (code) { await mpAcceptAnswer(code); }
+  };
+}
+
+function showAnswerUI(answerCode, name) {
+  const box = showModal(
+    '<div style="text-align:center;margin-bottom:16px;font-size:14px;letter-spacing:2px;color:#5eff5e;">JOINING AS ' + name + '</div>' +
+    '<div style="font-size:11px;color:rgba(234,255,255,0.5);margin-bottom:8px;">SEND THIS CODE BACK TO HOST</div>' +
+    '<div style="position:relative;">' +
+    '<textarea id="mp-answer-code" rows="4" readonly ' +
+    'style="width:100%;box-sizing:border-box;padding:8px 12px;font-family:monospace;font-size:10px;' +
+    'background:rgba(0,0,0,0.4);border:1px solid rgba(46,107,122,0.5);border-radius:6px;' +
+    'color:#eaffff;letter-spacing:0.5px;outline:none;resize:none;">' + answerCode + '</textarea>' +
+    '</div>' +
+    '<div id="mp-copy-answer" style="margin-top:12px;text-align:center;padding:10px;cursor:pointer;' +
+    'font-size:12px;letter-spacing:2px;color:#030c10;background:#5eff5e;' +
+    'border-radius:6px;font-weight:700;">COPY CODE</div>' +
+    '<div style="margin-top:16px;text-align:center;font-size:11px;color:rgba(234,255,255,0.4);">Waiting for host to connect...</div>'
+  );
+  box.querySelector('#mp-copy-answer').onclick = () => {
+    navigator.clipboard.writeText(answerCode).then(() => {
+      box.querySelector('#mp-copy-answer').textContent = 'COPIED!';
+      setTimeout(() => { box.querySelector('#mp-copy-answer').textContent = 'COPY CODE'; }, 1500);
+    });
+  };
+}
+
+function showJoinModal(encoded) {
+  const name = randomMatrixName();
+  const box = showModal(
+    '<div style="text-align:center;margin-bottom:16px;font-size:14px;letter-spacing:2px;color:#5eff5e;">JOIN MULTIPLAYER ROOM</div>' +
+    '<div style="font-size:11px;color:rgba(234,255,255,0.5);margin-bottom:8px;">NAME YOUR SHIP</div>' +
+    '<input id="mp-name-input" type="text" value="' + name + '" maxlength="20" ' +
+    'style="width:100%;box-sizing:border-box;padding:8px 12px;font-family:monospace;font-size:13px;' +
+    'background:rgba(0,0,0,0.4);border:1px solid rgba(46,107,122,0.5);border-radius:6px;' +
+    'color:#eaffff;letter-spacing:1px;outline:none;text-transform:uppercase;" />' +
+    '<div id="mp-join-btn" style="margin-top:16px;text-align:center;padding:10px;cursor:pointer;' +
+    'font-size:12px;letter-spacing:2px;color:#030c10;background:#5eff5e;' +
+    'border-radius:6px;font-weight:700;">JOIN</div>'
+  );
+  box.querySelector('#mp-join-btn').onclick = async () => {
+    const n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
+    await mpJoinRoom(encoded, n);
+  };
+  box.querySelector('#mp-name-input').focus();
+  box.querySelector('#mp-name-input').select();
+}
+
+// ---------------------------------------------------------------------------
 // Touch controls (joystick + fire button)
 // ---------------------------------------------------------------------------
 
@@ -1985,6 +2364,15 @@ function init(bundle, parent, options = {}) {
   buildUiControls();
   buildHudOverlay();
   buildTouchControls();
+  buildInviteButton();
+  buildMpIndicator();
+
+  const hash = location.hash;
+  if (hash && hash.startsWith('#room=')) {
+    const encoded = hash.substring(6);
+    showJoinModal(encoded);
+    history.replaceState(null, '', location.pathname + location.search);
+  }
 
   resetGame();
   r360.start();
