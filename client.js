@@ -2105,16 +2105,6 @@ function showModal(html) {
   return box;
 }
 
-function bindBtn(id, fn) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.style.pointerEvents = 'auto';
-  el.style.touchAction = 'none';
-  el.style.userSelect = 'none';
-  el.style.webkitUserSelect = 'none';
-  el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fn(e); }, true);
-}
-
 function hideModal() {
   if (mpModalEl) { mpModalEl.remove(); mpModalEl = null; }
 }
@@ -2139,10 +2129,16 @@ function showCreateModal() {
     '<div id="mp-create-btn" style="' + BTN_GREEN + '">HOST A ROOM</div>' +
     '<div style="' + HINT + '">You\'ll get a link to send to a friend.<br>Works on any device — no account needed.</div>'
   );
-  bindBtn('mp-create-btn', async () => {
+  const btn = box.querySelector('#mp-create-btn');
+  btn.style.pointerEvents = 'auto';
+  btn.addEventListener('pointerdown', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
+    btn.textContent = 'CREATING...';
+    btn.style.opacity = '0.6';
     await mpCreateRoom(n);
-  });
+  }, true);
   box.querySelector('#mp-name-input').focus();
   box.querySelector('#mp-name-input').select();
 }
@@ -2163,6 +2159,7 @@ function showWaitingUI(url, name) {
     'cursor:pointer;font-size:10px;letter-spacing:1px;color:#030c10;background:#5eff5e;' +
     'border-radius:4px;display:flex;align-items:center;">COPY</div>' +
     '</div>' +
+    '<div id="mp-copy-status" style="margin-top:8px;text-align:center;font-size:11px;color:#5eff5e;min-height:16px;">Link copied to clipboard!</div>' +
     '<div style="margin-top:18px;font-size:12px;color:#eaffff;">' +
       '<span id="mp-step3-num" style="' + STEP_WAIT + '">3</span>Paste their answer code</div>' +
     '<textarea id="mp-answer-input" rows="3" placeholder="Waiting for friend to join..." ' +
@@ -2172,35 +2169,47 @@ function showWaitingUI(url, name) {
     '<div id="mp-connect-btn" style="' + BTN_BLUE + '">CONNECT</div>' +
     '<div style="' + HINT + '">Copy the link, text it to your friend,<br>then paste the code they send back.</div>'
   );
-  bindBtn('mp-copy-btn', () => {
+  const copyBtn = box.querySelector('#mp-copy-btn');
+  copyBtn.style.pointerEvents = 'auto';
+  copyBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     navigator.clipboard.writeText(url).then(() => {
-      box.querySelector('#mp-copy-btn').textContent = 'COPIED!';
-      setTimeout(() => { box.querySelector('#mp-copy-btn').textContent = 'COPY'; }, 1500);
+      copyBtn.textContent = 'COPIED!';
+      box.querySelector('#mp-copy-status').textContent = 'Link copied to clipboard!';
+      setTimeout(() => { copyBtn.textContent = 'COPY'; }, 1500);
     }).catch(() => {
       const inp = box.querySelector('#mp-url');
       inp.select();
       document.execCommand('copy');
-      box.querySelector('#mp-copy-btn').textContent = 'COPIED!';
-      setTimeout(() => { box.querySelector('#mp-copy-btn').textContent = 'COPY'; }, 1500);
+      copyBtn.textContent = 'COPIED!';
+      box.querySelector('#mp-copy-status').textContent = 'Link copied to clipboard!';
+      setTimeout(() => { copyBtn.textContent = 'COPY'; }, 1500);
     });
   });
-  bindBtn('mp-connect-btn', async () => {
+  const connectBtn = box.querySelector('#mp-connect-btn');
+  connectBtn.style.pointerEvents = 'auto';
+  connectBtn.addEventListener('pointerdown', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const code = box.querySelector('#mp-answer-input').value.trim();
     if (!code) {
       box.querySelector('#mp-answer-input').style.borderColor = 'rgba(255,94,94,0.8)';
       box.querySelector('#mp-answer-input').placeholder = 'Paste the code your friend sent you...';
       return;
     }
-    box.querySelector('#mp-connect-btn').textContent = 'CONNECTING...';
-    box.querySelector('#mp-connect-btn').style.opacity = '0.6';
+    connectBtn.textContent = 'CONNECTING...';
+    connectBtn.style.opacity = '0.6';
     try { await mpAcceptAnswer(code); } catch (err) {
-      box.querySelector('#mp-connect-btn').textContent = 'CONNECT';
-      box.querySelector('#mp-connect-btn').style.opacity = '1';
+      connectBtn.textContent = 'CONNECT';
+      connectBtn.style.opacity = '1';
       box.querySelector('#mp-answer-input').style.borderColor = 'rgba(255,94,94,0.8)';
       box.querySelector('#mp-answer-input').value = '';
       box.querySelector('#mp-answer-input').placeholder = 'Invalid code — ask your friend to send it again';
     }
   });
+  // Auto-copy the URL to clipboard
+  navigator.clipboard.writeText(url).catch(() => {});
 }
 
 function showAnswerUI(answerCode, name) {
@@ -2215,19 +2224,28 @@ function showAnswerUI(answerCode, name) {
     'background:rgba(0,0,0,0.4);border:1px solid rgba(46,107,122,0.5);border-radius:6px;' +
     'color:#eaffff;letter-spacing:0.5px;outline:none;resize:none;">' + answerCode + '</textarea>' +
     '<div id="mp-copy-answer" style="' + BTN_GREEN + '">COPY CODE &amp; SHARE</div>' +
-    '<div style="' + HINT + '">Copy this code and send it to the host<br>(text, email, carrier pigeon, etc.)<br><br>The game will start once the host pastes your code.</div>'
+    '<div id="mp-copy-answer-status" style="margin-top:8px;text-align:center;font-size:11px;color:#5eff5e;min-height:16px;">Code copied to clipboard!</div>' +
+    '<div style="' + HINT + '">Send this code to the host<br>(text, email, carrier pigeon, etc.)<br><br>The game will start once the host pastes your code.</div>'
   );
-  bindBtn('mp-copy-answer', () => {
+  const copyBtn = box.querySelector('#mp-copy-answer');
+  copyBtn.style.pointerEvents = 'auto';
+  copyBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     navigator.clipboard.writeText(answerCode).then(() => {
-      box.querySelector('#mp-copy-answer').textContent = 'COPIED!';
-      setTimeout(() => { box.querySelector('#mp-copy-answer').textContent = 'COPY CODE & SHARE'; }, 1500);
+      copyBtn.textContent = 'COPIED!';
+      box.querySelector('#mp-copy-answer-status').textContent = 'Code copied to clipboard!';
+      setTimeout(() => { copyBtn.textContent = 'COPY CODE & SHARE'; }, 1500);
     }).catch(() => {
       box.querySelector('#mp-answer-code').select();
       document.execCommand('copy');
-      box.querySelector('#mp-copy-answer').textContent = 'COPIED!';
-      setTimeout(() => { box.querySelector('#mp-copy-answer').textContent = 'COPY CODE & SHARE'; }, 1500);
+      copyBtn.textContent = 'COPIED!';
+      box.querySelector('#mp-copy-answer-status').textContent = 'Code copied to clipboard!';
+      setTimeout(() => { copyBtn.textContent = 'COPY CODE & SHARE'; }, 1500);
     });
   });
+  // Auto-copy answer code to clipboard
+  navigator.clipboard.writeText(answerCode).catch(() => {});
 }
 
 function showJoinModal(encoded) {
@@ -2242,13 +2260,17 @@ function showJoinModal(encoded) {
     '<div id="mp-join-btn" style="' + BTN_GREEN + '">JOIN GAME</div>' +
     '<div style="' + HINT + '">After joining, you\'ll get a code to send back<br>to the host to finish connecting.</div>'
   );
-  bindBtn('mp-join-btn', async () => {
+  const joinBtn = box.querySelector('#mp-join-btn');
+  joinBtn.style.pointerEvents = 'auto';
+  joinBtn.addEventListener('pointerdown', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
-    box.querySelector('#mp-join-btn').textContent = 'JOINING...';
-    box.querySelector('#mp-join-btn').style.opacity = '0.6';
+    joinBtn.textContent = 'JOINING...';
+    joinBtn.style.opacity = '0.6';
     try { await mpJoinRoom(encoded, n); } catch (err) {
-      box.querySelector('#mp-join-btn').textContent = 'JOIN GAME';
-      box.querySelector('#mp-join-btn').style.opacity = '1';
+      joinBtn.textContent = 'JOIN GAME';
+      joinBtn.style.opacity = '1';
       box.querySelector('#mp-name-input').style.borderColor = 'rgba(255,94,94,0.8)';
     }
   });
