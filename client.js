@@ -45,7 +45,7 @@ const POWERUP_TYPES = [
   {name: 'LIFE',     emoji: '🚀', color: '#5eff5e'},
   {name: 'TRIPLE',   emoji: '🔫', color: '#ff5e5e', duration: 20},
   {name: 'SPEED',    emoji: '⚡', color: '#ffe45e', duration: 15},
-  {name: 'FIREWORK', emoji: '💥', color: '#ff6e5e'},
+  {name: 'FIREWORK', emoji: '💥', color: '#ff6e5e', duration: 5},
   {name: 'SHIELD',   emoji: '🛡️', color: '#5e9eff'},
   {name: 'RAPID',    emoji: '🌀', color: '#d05eff', duration: 15},
 ];
@@ -217,7 +217,7 @@ const SHAPES = [
     speed: 1,
     point(a, b, out) {
       const R = RADIUS;
-      const stripW = 14;
+      const stripW = 18;
       const bw = (b / PI) * stripW;
       const t = a;
       const half = t * 0.5;
@@ -232,7 +232,7 @@ const SHAPES = [
     },
     tangent(a, b) {
       const R = RADIUS;
-      const stripW = 14;
+      const stripW = 18;
       const bw = (b / PI) * stripW;
       const t = a;
       const half = t * 0.5;
@@ -272,9 +272,12 @@ const SHAPES = [
     _generate() {
       const bodies = [];
       const half = this.uHalf - 15;
-      const minSep = 50;
+      const minSep = 160;
       const planetCount = 3 + Math.floor(Math.random() * 3);
       const placed = [];
+      const planetColors = [0xff6633, 0x33ccaa, 0xaa55dd, 0xddaa22, 0x5588ff, 0xff4488, 0x88dd44];
+      const moonColors = [0x66ddff, 0xff88cc, 0x88ffaa, 0xffcc44, 0xcc88ff];
+      const moon2Colors = [0xaaddff, 0xffaadd, 0xaaffcc, 0xffdd88, 0xddaaff];
       for (let i = 0; i < planetCount; i++) {
         let x, z, ok;
         for (let t = 0; t < 30; t++) {
@@ -288,28 +291,31 @@ const SHAPES = [
           if (ok) break;
         }
         placed.push({ x, z });
-        const mass = 8 + Math.random() * 24;
-        const spread = 80 + Math.random() * 160;
-        const radius = 3 + mass * 0.3;
-        bodies.push({ x, z, mass, spread, radius, color: 0xddaa44, orbitAngle: 0, orbitR: 0 });
+        const mass = 6 + Math.random() * 18;
+        const spread = 400 + Math.random() * 400;
+        const radius = 3 + mass * 0.35;
+        const color = planetColors[i % planetColors.length];
+        bodies.push({ x, z, mass, spread, radius, color, orbitAngle: 0, orbitR: 0 });
         const moonCount = Math.random() < 0.6 ? 1 : 0;
         for (let m = 0; m < moonCount; m++) {
-          const moonDist = radius + 24 + Math.random() * 16;
-          const moonMass = 3 + Math.random() * 7;
-          const moonSpread = 30 + Math.random() * 60;
-          const moonRadius = 2 + moonMass * 0.25;
+          const moonDist = radius + 40 + Math.random() * 25;
+          const moonMass = 3 + Math.random() * 8;
+          const moonSpread = 200 + Math.random() * 200;
+          const moonRadius = 2 + moonMass * 0.3;
           bodies.push({
             x, z, mass: moonMass, spread: moonSpread, radius: moonRadius,
-            color: 0x88aacc, orbitAngle: Math.random() * Math.PI * 2,
+            color: moonColors[Math.floor(Math.random() * moonColors.length)],
+            orbitAngle: Math.random() * Math.PI * 2,
             orbitR: moonDist, parentIdx: bodies.length - 1,
           });
           if (Math.random() < 0.1) {
-            const m2Dist = radius + 36 + Math.random() * 16;
-            const m2Mass = 1.5 + Math.random() * 3;
-            const m2Spread = 15 + Math.random() * 25;
+            const m2Dist = radius + 60 + Math.random() * 30;
+            const m2Mass = 2 + Math.random() * 5;
+            const m2Spread = 100 + Math.random() * 150;
             bodies.push({
-              x, z, mass: m2Mass, spread: m2Spread, radius: 1.2 + m2Mass * 0.2,
-              color: 0xaaccee, orbitAngle: Math.random() * Math.PI * 2,
+              x, z, mass: m2Mass, spread: m2Spread, radius: 1.5 + m2Mass * 0.25,
+              color: moon2Colors[Math.floor(Math.random() * moon2Colors.length)],
+              orbitAngle: Math.random() * Math.PI * 2,
               orbitR: m2Dist, parentIdx: bodies.length - moonCount - 1,
             });
           }
@@ -332,8 +338,8 @@ const SHAPES = [
     point(a, b, out) {
       let y = 0;
       for (const body of this._bodies) {
-        this._bodyPos(body, _tmp);
-        const d2 = (a - _tmp.x) * (a - _tmp.x) + (b - _tmp.z) * (b - _tmp.z);
+        this._bodyPos(body, _tmp3);
+        const d2 = (a - _tmp3.x) * (a - _tmp3.x) + (b - _tmp3.z) * (b - _tmp3.z);
         y -= body.mass * Math.exp(-d2 / body.spread);
       }
       out.set(a, y, b);
@@ -347,7 +353,7 @@ const SHAPES = [
       this.point(a, b + eps, _tmp);
       this.point(a, b - eps, _tmp2);
       _ev.subVectors(_tmp, _tmp2).normalize();
-      _n.crossVectors(_eu, _ev).normalize();
+      _n.crossVectors(_ev, _eu).normalize();
       _eT.copy(_eu);
       _eP.copy(_ev);
     },
@@ -361,6 +367,23 @@ const SHAPES = [
     },
   },
 ];
+
+// Reorder: TORUS, SPHERE, PSEUDOSPHERE, PLANE, CORRUG, EINSTEIN x2, MOBIUS
+{
+  const _torus = SHAPES[0];
+  const _sphere = SHAPES[1];
+  const _pseudo = SHAPES[2];
+  const _plane = SHAPES[3];
+  const _corrug = SHAPES[4];
+  const _einstein = SHAPES[6];
+  const _mobius = SHAPES[5];
+  const _einstein2 = Object.assign({}, _einstein, {
+    _bodies: [],
+    _generate() { _einstein._generate.call(this); },
+  });
+  SHAPES.length = 0;
+  SHAPES.push(_torus, _sphere, _pseudo, _plane, _corrug, _einstein, _einstein2, _mobius);
+}
 
 let shapeIdx = 0;
 let SHAPE = SHAPES[0];
@@ -417,6 +440,8 @@ let arenaGroup = null;
 let quadrantGroup = null;
 let einsteinGroup = null;
 let toggleBtn = null;
+let colorBtn = null;
+let fpBtn = null;
 
 // ---------------------------------------------------------------------------
 // Tiny synthesized audio (WebAudio, created on first user gesture)
@@ -509,10 +534,10 @@ const G = {
   speedTimer: 0,
   rapidTimer: 0,
   shieldHits: 0,
-  fireworkNext: false,
+  fireworkTimer: 0,
   powerupCd: POWERUP_SPAWN_INTERVAL,
   colorMode: false,
-  firstPerson: false,
+  firstPerson: true,
 };
 
 let r360 = null;
@@ -580,7 +605,7 @@ function spawnDistOK(theta, phi) {
   surfacePoint(theta, phi, _tmp2);
   if (_tmp.distanceTo(_tmp2) < MIN_SPAWN_DIST) { return false; }
   if (SHAPE.uHalf === PLANE_HALF || SHAPE.name === 'EINSTEIN') {
-    if (theta * theta + phi * phi < 1600) { return false; }
+    if (theta * theta + phi * phi < 3600) { return false; }
   }
   if (SHAPE.name === 'EINSTEIN') {
     const s = SHAPE;
@@ -647,8 +672,8 @@ function buildArenaGrid() {
   const matPrime = new THREE.LineBasicMaterial({color: isGreen ? 0x1a5c2e : 0x2c6f80, transparent: true, opacity: 0.8});
   const matEq = new THREE.LineBasicMaterial({color: isGreen ? 0x2a8c44 : 0x3d95a8, transparent: true, opacity: 0.85});
 
-  const uCount = isBig ? 32 : isGreen ? 24 : 16;
-  const vCount = isBig ? 24 : isGreen ? 16 : 8;
+  const uCount = isBig ? 20 : isGreen ? 24 : 16;
+  const vCount = isBig ? 14 : isGreen ? 16 : 8;
   const uHalf = SHAPE.uHalf;
   const vMin = -SHAPE.vHalf;
   const vMax = SHAPE.vHalf;
@@ -947,12 +972,14 @@ function beginWave() {
   // Cycle shape each level
   shapeIdx = (G.wave - 1) % SHAPES.length;
   SHAPE = SHAPES[shapeIdx];
+  G.firstPerson = SHAPE.name !== 'SPHERE' && SHAPE.name !== 'MOBIUS';
   rebuildArena();
   wrapBody(G);
   _refInit = false;
   computeCamera();
   _smoothCam.copy(_camPosV);
   updateToggleLabel();
+  updateToggleStyles();
 
   const count = Math.min(3 + G.wave, 11);
   for (let i = 0; i < count; i++) {
@@ -1006,8 +1033,7 @@ function fireBullet() {
   Audio.shoot();
 
   const offsets = G.tripleTimer > 0 ? [-0.35, 0, 0.35] : [0];
-  const isFirework = G.fireworkNext;
-  if (G.fireworkNext) { G.fireworkNext = false; }
+  const isFirework = G.fireworkTimer > 0;
   for (const off of offsets) {
     const b = {
       theta: G.theta + Math.sin(G.heading) * 0.05,
@@ -1084,7 +1110,7 @@ function hitAsteroid(bullet, asteroid) {
     G.speedTimer = 0;
     G.rapidTimer = 0;
     G.shieldHits = 0;
-    G.fireworkNext = false;
+    G.fireworkTimer = 0;
     G.powerupCd = POWERUP_SPAWN_INTERVAL;
   }
 }
@@ -1204,7 +1230,7 @@ function applyPowerup(type) {
     case 'LIFE':     G.lives++; break;
     case 'TRIPLE':   G.tripleTimer += type.duration; break;
     case 'SPEED':    G.speedTimer += type.duration; break;
-    case 'FIREWORK': G.fireworkNext = true; break;
+    case 'FIREWORK': G.fireworkTimer += type.duration; break;
     case 'SHIELD':   G.shieldHits++; break;
     case 'RAPID':    G.rapidTimer += type.duration; break;
   }
@@ -1261,7 +1287,8 @@ function updateEinsteinBodies(dt) {
     }
   }
   updateEinsteinMeshPositions();
-  if (++_einsteinFrame % 6 === 0) { rebuildEinsteinGrid(); }
+  _einsteinFrame++;
+  if (_einsteinFrame % 12 === 0) { rebuildEinsteinGrid(); }
 }
 
 function handleEinsteinCollisions() {
@@ -1293,6 +1320,25 @@ function handleEinsteinCollisions() {
         killShip(null);
         break;
       }
+    }
+  }
+
+  for (let i = asteroids.length - 1; i >= 0; i--) {
+    const a = asteroids[i];
+    surfacePoint(a.theta, a.phi, _tmp);
+    for (const body of s._bodies) {
+      s._bodyPos(body, _tmp2);
+      s.point(_tmp2.x, _tmp2.z, _tmp2);
+      if (_tmp.distanceTo(_tmp2) < body.radius + a.radius) {
+        removeAsteroid(a);
+        spawnRing(a.theta, a.phi, 0xff8844, { life: 0.4, grow: 10 });
+        break;
+      }
+    }
+    if (asteroids.length === 0 && G.status === 'playing' && G.startTimer <= 0) {
+      const nextIdx2 = G.wave % SHAPES.length;
+      setMsg('WAVE CLEAR  \u2192  ' + SHAPES[nextIdx2].name, 2.2);
+      G.startTimer = 2.3;
     }
   }
 }
@@ -1376,6 +1422,7 @@ function update(dt) {
   if (G.tripleTimer > 0) { G.tripleTimer -= dt; }
   if (G.speedTimer > 0) { G.speedTimer -= dt; }
   if (G.rapidTimer > 0) { G.rapidTimer -= dt; }
+  if (G.fireworkTimer > 0) { G.fireworkTimer -= dt; }
 
   const shipAlive = G.respawnTimer <= 0;
 
@@ -1479,7 +1526,11 @@ function computeCamera() {
     _camDir.copy(_eT).multiplyScalar(Math.sin(G.heading))
       .addScaledVector(_eP, Math.cos(G.heading))
       .normalize();
-    _camPosV.copy(_shipPosV).addScaledVector(_n, 0.3);
+    _camPosV.copy(_shipPosV).addScaledVector(_n, 20);
+    const sh = Math.sin(G.heading);
+    const ch = Math.cos(G.heading);
+    _camPosV.addScaledVector(_eT, -sh * 26);
+    _camPosV.addScaledVector(_eP, -ch * 26);
   } else {
     const vp = VIEW.pitch;
     const vy = VIEW.yaw;
@@ -1492,7 +1543,7 @@ function computeCamera() {
       .addScaledVector(_refT, spy * cy)
       .addScaledVector(_refE, spy * sy)
       .normalize();
-    const hover = CAM_HOVER * (SHAPE.name === 'EINSTEIN' ? 3 : 1);
+    const hover = CAM_HOVER * (SHAPE.name === 'EINSTEIN' ? 2 : 1);
     _camPosV.copy(_shipPosV).addScaledVector(_n, hover);
   }
 }
@@ -1523,7 +1574,14 @@ function onFrame(ms) {
     _tmp.set(0, 1, 0);
     _rollQuat.setFromAxisAngle(_tmp, PI);
     _camQuat.multiply(_rollQuat);
-    _smoothCam.copy(_shipPosV).addScaledVector(_n, 0.3);
+    _tmp.set(1, 0, 0);
+    _rollQuat.setFromAxisAngle(_tmp, -0.25);
+    _camQuat.multiply(_rollQuat);
+    _smoothCam.copy(_shipPosV).addScaledVector(_n, 20);
+    const sh = Math.sin(G.heading);
+    const ch = Math.cos(G.heading);
+    _smoothCam.addScaledVector(_eT, -sh * 26);
+    _smoothCam.addScaledVector(_eP, -ch * 26);
   } else {
     _lookZ.subVectors(_smoothCam, _shipPosV).normalize();
     _lookUp.copy(_refT).addScaledVector(_lookZ, -_refT.dot(_lookZ));
@@ -1596,14 +1654,15 @@ function onPointerUp(e) {
 // ---------------------------------------------------------------------------
 
 function updateToggleLabel() {
-  if (toggleBtn) {
-    toggleBtn.innerText = SHAPE.name;
+  if (toggleBtn && toggleBtn.tagName === 'SELECT') {
+    toggleBtn.value = shapeIdx;
   }
 }
 
 function toggleGeometry() {
   shapeIdx = (shapeIdx + 1) % SHAPES.length;
   SHAPE = SHAPES[shapeIdx];
+  G.firstPerson = SHAPE.name !== 'SPHERE' && SHAPE.name !== 'MOBIUS';
   rebuildArena();
   wrapBody(G);
   for (const a of asteroids) {
@@ -1623,6 +1682,7 @@ function toggleGeometry() {
   computeCamera();
   _smoothCam.copy(_camPosV);
   updateToggleLabel();
+  updateToggleStyles();
 }
 
 function toggleColors() {
@@ -1631,10 +1691,12 @@ function toggleColors() {
   for (const a of asteroids) {
     a.mesh.material.color.setHex(quadrantColor(a.theta, a.phi));
   }
+  updateToggleStyles();
 }
 
 function toggleFirstPerson() {
   G.firstPerson = !G.firstPerson;
+  updateToggleStyles();
 }
 
 function buildUiControls() {
@@ -1642,26 +1704,42 @@ function buildUiControls() {
   wrap.id = 'r360-ui-controls';
   wrap.style.cssText =
     'position:fixed;top:40px;left:50%;transform:translateX(-50%);z-index:110;pointer-events:none;' +
-    'display:flex;gap:8px;';
+    'display:flex;gap:8px;align-items:center;';
 
-  const btn = document.createElement('div');
-  btn.innerText = SHAPE.name;
-  btn.style.cssText =
+  const sel = document.createElement('select');
+  sel.style.cssText =
+    'pointer-events:auto;cursor:pointer;touch-action:none;' +
+    'padding:5px 10px;border-radius:999px;border:2px solid rgba(255,255,255,0.3);' +
+    'background:rgba(0,0,0,0.5);color:#cfeeff;font:700 12px/1 monospace;letter-spacing:1px;';
+  for (let i = 0; i < SHAPES.length; i++) {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = SHAPES[i].name;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener('change', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    shapeIdx = parseInt(sel.value, 10);
+    SHAPE = SHAPES[shapeIdx];
+    G.firstPerson = SHAPE.name !== 'SPHERE' && SHAPE.name !== 'MOBIUS';
+    rebuildArena();
+    wrapBody(G);
+    _refInit = false;
+    computeCamera();
+    _smoothCam.copy(_camPosV);
+    updateToggleStyles();
+  });
+  wrap.appendChild(sel);
+  toggleBtn = sel;
+
+  colorBtn = document.createElement('div');
+  colorBtn.innerText = 'COLOR';
+  colorBtn.style.cssText =
     'pointer-events:auto;cursor:pointer;touch-action:none;-webkit-user-select:none;' +
     'user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;' +
     'padding:5px 14px;border-radius:999px;border:2px solid rgba(255,255,255,0.3);' +
     'background:rgba(0,0,0,0.25);color:#cfeeff;font:700 12px/1 monospace;letter-spacing:1px;';
-  btn.addEventListener('pointerdown', e => {
-    e.preventDefault();
-    e.stopPropagation();
-    toggleGeometry();
-  });
-  wrap.appendChild(btn);
-  toggleBtn = btn;
-
-  const colorBtn = document.createElement('div');
-  colorBtn.innerText = 'COLOR';
-  colorBtn.style.cssText = btn.style.cssText;
   colorBtn.addEventListener('pointerdown', e => {
     e.preventDefault();
     e.stopPropagation();
@@ -1669,9 +1747,9 @@ function buildUiControls() {
   });
   wrap.appendChild(colorBtn);
 
-  const fpBtn = document.createElement('div');
+  fpBtn = document.createElement('div');
   fpBtn.innerText = 'FPS';
-  fpBtn.style.cssText = btn.style.cssText;
+  fpBtn.style.cssText = colorBtn.style.cssText;
   fpBtn.addEventListener('pointerdown', e => {
     e.preventDefault();
     e.stopPropagation();
@@ -1680,6 +1758,15 @@ function buildUiControls() {
   wrap.appendChild(fpBtn);
 
   document.body.appendChild(wrap);
+  updateToggleStyles();
+}
+
+function updateToggleStyles() {
+  const base = 'pointer-events:auto;cursor:pointer;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;padding:5px 14px;border-radius:999px;border:2px solid;font:700 12px/1 monospace;letter-spacing:1px;';
+  const on = base + 'border-color:rgba(94,255,94,0.7);background:rgba(94,255,94,0.15);color:#5eff5e;';
+  const off = base + 'border-color:rgba(255,255,255,0.3);background:rgba(0,0,0,0.25);color:#cfeeff;';
+  if (colorBtn) { colorBtn.style.cssText = G.colorMode ? on : off; }
+  if (fpBtn) { fpBtn.style.cssText = G.firstPerson ? on : off; }
 }
 
 // ---------------------------------------------------------------------------
@@ -1732,8 +1819,8 @@ function updateHudOverlay() {
     if (G.speedTimer > 0) {
       parts.push('⚡ ' + Math.ceil(G.speedTimer) + 's');
     }
-    if (G.fireworkNext) {
-      parts.push('💥 READY');
+    if (G.fireworkTimer > 0) {
+      parts.push('💥 ' + Math.ceil(G.fireworkTimer) + 's');
     }
     if (G.shieldHits > 0) {
       parts.push('🛡️ x' + G.shieldHits);
