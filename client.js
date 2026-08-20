@@ -2098,9 +2098,8 @@ function showModal(html) {
     'border-radius:12px;padding:24px 32px;min-width:340px;max-width:520px;' +
     'font-family:monospace;color:#eaffff;';
   box.innerHTML = html;
-  box.addEventListener('pointerdown', e => e.stopPropagation(), true);
   overlay.appendChild(box);
-  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) { e.preventDefault(); e.stopPropagation(); hideModal(); } }, true);
+  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) { e.preventDefault(); hideModal(); } }, true);
   document.body.appendChild(overlay);
   mpModalEl = overlay;
   return box;
