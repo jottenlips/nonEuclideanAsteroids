@@ -19,6 +19,17 @@
   <body>
     <!-- Attachment point for your app -->
     <div id="container"></div>
+
+    <div id="mp-invite-wrap" style="position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:9999;pointer-events:none;">
+      <div id="mp-invite-btn" style="pointer-events:auto;cursor:pointer;padding:8px 28px;font-family:monospace;font-size:13px;letter-spacing:2px;color:#5eff5e;background:rgba(3,12,16,0.7);border:1px solid rgba(94,255,94,0.4);border-radius:6px;-webkit-user-select:none;user-select:none;touch-action:none;">INVITE</div>
+    </div>
+    <script>
+      document.getElementById('mp-invite-btn').addEventListener('pointerdown', function(e) {
+        e.stopPropagation();
+        if (window._mpShowCreateModal) { window._mpShowCreateModal(); }
+      }, true);
+    </script>
+
     <script>
       // Load bundles with a cache-busting query so refreshed pages always get
       // the latest code (Metro dev server sends no Cache-Control header).
