@@ -667,6 +667,7 @@ function mpCreateRoom(roomName, name) {
   MP.role = 'host';
   MP.playerName = name;
   MP.roomCode = roomName;
+  try { localStorage.setItem('mp_session', JSON.stringify({role:'host', room:roomName, name:name})); } catch(e) {}
   const pc = new RTCPeerConnection({iceServers: [{urls: 'stun:stun.l.google.com:19302'}]});
   MP.pc = pc;
   const dc = pc.createDataChannel('game', {ordered: false, maxRetransmits: 0});
@@ -718,6 +719,7 @@ function mpJoinRoom(roomCode, name) {
   MP.role = 'client';
   MP.playerName = name;
   MP.roomCode = roomCode;
+  try { localStorage.setItem('mp_session', JSON.stringify({role:'client', room:roomCode, name:name})); } catch(e) {}
   const pc = new RTCPeerConnection({iceServers: [{urls: 'stun:stun.l.google.com:19302'}]});
   MP.pc = pc;
   pc.ondatachannel = (e) => {
@@ -749,6 +751,10 @@ function sendHostState() {
     s: G.score, l: G.lives, v: G.respawnTimer <= 0,
     e: G.respawnTimer <= 0 && engineMesh && engineMesh.visible,
     sh: G.shieldHits, hp: G.health,
+    pt: G.tripleTimer > 0 ? Math.ceil(G.tripleTimer) : 0,
+    ps2: G.speedTimer > 0 ? Math.ceil(G.speedTimer) : 0,
+    pr: G.rapidTimer > 0 ? Math.ceil(G.rapidTimer) : 0,
+    pw: G.fireworkTimer > 0 ? Math.ceil(G.fireworkTimer) : 0,
   }];
   for (const k in MP.remotePlayers) {
     const r = MP.remotePlayers[k];
@@ -756,6 +762,7 @@ function sendHostState() {
       n: r.name, θ: r.theta, φ: r.phi, h: r.heading, b: r.bank,
       s: r.score || 0, l: r.lives || START_LIVES, v: r.respawnTimer <= 0,
       e: false, sh: r.shieldHits || 0, hp: r.health || HEALTH_MAX,
+      pt: 0, ps2: 0, pr: 0, pw: 0,
     });
   }
   MP.dc.send(JSON.stringify({
@@ -868,6 +875,10 @@ function handleClientMessage(msg) {
       if (p.n === MP.playerName) {
         G.theta = p.θ; G.phi = p.φ; G.heading = p.h; G.bank = p.b;
         G.score = p.s; G.lives = p.l; G.shieldHits = p.sh; G.health = p.hp;
+        if (p.pt !== undefined) G.tripleTimer = p.pt;
+        if (p.ps2 !== undefined) G.speedTimer = p.ps2;
+        if (p.pr !== undefined) G.rapidTimer = p.pr;
+        if (p.pw !== undefined) G.fireworkTimer = p.pw;
         shipMesh.visible = p.v;
         if (engineMesh) engineMesh.visible = p.e;
         if (p.v) placeOriented(shipMesh, G);
@@ -875,8 +886,9 @@ function handleClientMessage(msg) {
         ensureRemotePlayer(p);
         var rp = MP.remotePlayers[p.n];
         rp.theta = p.θ; rp.phi = p.φ; rp.heading = p.h; rp.bank = p.b;
+        rp.score = p.s; rp.lives = p.l;
         rp.respawnTimer = p.v ? 0 : 999;
-        rp.health = p.hp;
+        rp.health = p.hp; rp.shieldHits = p.sh;
         rp.mesh.visible = p.v;
         if (p.v) placeOriented(rp.mesh, rp);
       }
@@ -1817,7 +1829,22 @@ function handleCollisions() {
       surfacePoint(a.theta, a.phi, _tmp2);
       const rr = a.radius + (G.shieldHits > 0 ? SHIP_RADIUS * 3 : SHIP_RADIUS);
       if (_tmp.distanceToSquared(_tmp2) < rr * rr) {
-        damageShip(ASTEROID_DAMAGE, a);
+        if (G.shieldHits > 0) {
+          G.shieldHits--;
+          Audio.explode();
+          spawnRing(G.theta, G.phi, 0x5e9eff, {life: 0.5, grow: 30});
+          spawnRing(a.theta, a.phi, 0x5e9eff, {life: 0.4, grow: 22});
+          removeAsteroid(a);
+          if (asteroids.length === 0 && G.status === 'playing') {
+            const nextIdx2 = G.wave % SHAPES.length;
+            setMsg('WAVE CLEAR  \u2192  ' + SHAPES[nextIdx2].name, 2.2);
+            G.startTimer = 2.3;
+          }
+        } else {
+          killShip();
+          spawnRing(a.theta, a.phi, 0xff5e5e, {life: 0.35, grow: 26});
+          removeAsteroid(a);
+        }
         break;
       }
     }
@@ -1831,17 +1858,14 @@ function handleCollisions() {
       surfacePoint(a.theta, a.phi, _tmp2);
       const rr = a.radius + SHIP_RADIUS;
       if (_tmp.distanceToSquared(_tmp2) < rr * rr) {
-        rp.health = (rp.health || HEALTH_MAX) - ASTEROID_DAMAGE;
-        spawnRing(rp.theta, rp.phi, 0xff5e5e, {life: 0.3, grow: 20});
+        rp.health = 0;
+        rp.respawnTimer = 3;
+        rp.mesh.visible = false;
+        rp.vTheta = 0; rp.vPhi = 0;
+        rp.lives -= 1;
+        spawnRing(rp.theta, rp.phi, 0xff6b6b, {life: 0.5, grow: 30});
+        spawnRing(a.theta, a.phi, 0xff5e5e, {life: 0.35, grow: 26});
         removeAsteroid(a);
-        if (rp.health <= 0) {
-          rp.health = HEALTH_MAX;
-          rp.respawnTimer = 3;
-          rp.mesh.visible = false;
-          rp.vTheta = 0; rp.vPhi = 0;
-          rp.lives -= 1;
-          spawnRing(rp.theta, rp.phi, 0xff6b6b, {life: 0.5, grow: 30});
-        }
         break;
       }
     }
@@ -2366,7 +2390,8 @@ function buildHudOverlay() {
     '<span style="color:rgba(46,107,122,0.6);">│</span>' +
     '<span id="hud-lives">▲▲▲</span>' +
     '<span style="color:rgba(46,107,122,0.6);">│</span>' +
-    '<span id="hud-powerups" style="font-size:11px;color:#5eff5e;"></span>';
+    '<span id="hud-powerups" style="font-size:11px;color:#5eff5e;"></span>' +
+    '<span id="hud-remote" style="display:none;"></span>';
   document.body.appendChild(el);
   hudEl = el;
 }
@@ -2377,6 +2402,7 @@ function updateHudOverlay() {
   const levelEl = document.getElementById('hud-level');
   const livesEl = document.getElementById('hud-lives');
   const pupEl = document.getElementById('hud-powerups');
+  const remoteEl = document.getElementById('hud-remote');
   if (scoreEl) {
     scoreEl.textContent = 'SCORE ' + String(G.score).padStart(6, '0');
   }
@@ -2404,6 +2430,31 @@ function updateHudOverlay() {
       parts.push('🌀 ' + Math.ceil(G.rapidTimer) + 's');
     }
     pupEl.textContent = parts.join('  ');
+  }
+  if (remoteEl) {
+    var names = Object.keys(MP.remotePlayers);
+    if (names.length > 0 && MP.connected) {
+      var parts = [];
+      for (var i = 0; i < names.length; i++) {
+        var rp = MP.remotePlayers[names[i]];
+        var hp = Math.max(0, Math.round(rp.health || 0));
+        var hpColor = hp > 60 ? '#5eff5e' : hp > 30 ? '#ffff5e' : '#ff5e5e';
+        parts.push(
+          '<span style="margin-right:14px;">' +
+          '<span style="color:rgba(46,107,122,0.6);">│</span> ' +
+          '<span style="color:' + MP_COLORS[(i + 1) % MP_COLORS.length] + ';">' + rp.name + '</span> ' +
+          '<span style="color:rgba(234,255,255,0.5);">S' + String(rp.score || 0).padStart(6, '0') + '</span> ' +
+          '<span>' + '▲'.repeat(Math.max(0, rp.lives || 0)) + '</span> ' +
+          '<span style="color:' + hpColor + ';font-size:10px;">HP' + hp + '</span>' +
+          '</span>'
+        );
+      }
+      remoteEl.innerHTML = parts.join('');
+      remoteEl.style.display = '';
+    } else {
+      remoteEl.innerHTML = '';
+      remoteEl.style.display = 'none';
+    }
   }
 }
 
@@ -2497,17 +2548,18 @@ const BTN_BLUE = 'margin-top:12px;text-align:center;padding:10px;cursor:pointer;
 const LABEL = 'font-size:11px;color:rgba(234,255,255,0.5);margin-bottom:6px;';
 const HINT = 'margin-top:14px;text-align:center;font-size:11px;color:rgba(234,255,255,0.4);line-height:1.6;';
 
+function genRoomCode() {
+  var code = '';
+  for (var i = 0; i < 6; i++) { code += Math.floor(Math.random() * 10); }
+  return code;
+}
+
 function showCreateModal() {
   var shipName = randomMatrixName();
-  var roomName = randomMatrixName().replace(/\s/g, '');
   var box = showModal(
     '<div style="text-align:center;margin-bottom:18px;font-size:14px;letter-spacing:2px;color:#5eff5e;">HOST A ROOM</div>' +
     '<div style="margin-bottom:8px;font-size:12px;color:#eaffff;">' +
-      '<span style="' + STEP_ACTIVE + '">1</span>Room name</div>' +
-    '<input id="mp-room-input" type="text" value="' + roomName + '" maxlength="16" ' +
-    'style="' + INPUT_STYLE + 'margin-bottom:14px;" />' +
-    '<div style="margin-bottom:8px;font-size:12px;color:#eaffff;">' +
-      '<span style="' + STEP_ACTIVE + '">2</span>Your ship name</div>' +
+      '<span style="' + STEP_ACTIVE + '"></span>Your ship name</div>' +
     '<input id="mp-name-input" type="text" value="' + shipName + '" maxlength="20" style="' + INPUT_STYLE + '" />' +
     '<div id="mp-create-btn" style="' + BTN_GREEN + '">HOST A ROOM</div>' +
     '<div style="' + HINT + '">Share the link with a friend.<br>Works on any device — no account needed.</div>'
@@ -2517,18 +2569,14 @@ function showCreateModal() {
   btn.addEventListener('pointerdown', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    var r = box.querySelector('#mp-room-input').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
     var n = box.querySelector('#mp-name-input').value.trim().toUpperCase() || randomMatrixName();
-    if (r.length < 3) {
-      box.querySelector('#mp-room-input').style.borderColor = 'rgba(255,94,94,0.8)';
-      return;
-    }
+    var r = genRoomCode();
     btn.textContent = 'CREATING...';
     btn.style.opacity = '0.6';
     mpCreateRoom(r, n);
   }, true);
-  box.querySelector('#mp-room-input').focus();
-  box.querySelector('#mp-room-input').select();
+  box.querySelector('#mp-name-input').focus();
+  box.querySelector('#mp-name-input').select();
 }
 
 function showWaitingUI(roomCode, name) {
@@ -2588,8 +2636,8 @@ function showJoiningUI(name) {
   );
 }
 
-function showJoinModal(roomCode) {
-  var name = randomMatrixName();
+function showJoinModal(roomCode, presetName) {
+  var name = presetName || randomMatrixName();
   var box = showModal(
     '<div style="text-align:center;margin-bottom:18px;font-size:14px;letter-spacing:2px;color:#5eff5e;">JOIN ' + roomCode + '</div>' +
     '<div style="margin-bottom:4px;font-size:12px;color:rgba(234,255,255,0.6);line-height:1.5;">' +
@@ -2776,12 +2824,28 @@ function init(bundle, parent, options = {}) {
   buildMpIndicator();
 
   const hash = location.hash;
-  if (hash && hash.startsWith('#code=')) {
-    const roomCode = hash.substring(6).toUpperCase();
-    showJoinModal(roomCode);
-    history.replaceState(null, '', location.pathname + location.search);
-  } else if (hash && hash.startsWith('#room=')) {
-    history.replaceState(null, '', location.pathname + location.search);
+  if (hash && hash.indexOf('code=') !== -1) {
+    var params = {};
+    hash.substring(1).split('&').forEach(function(p) {
+      var kv = p.split('=');
+      if (kv.length === 2) params[kv[0]] = decodeURIComponent(kv[1]);
+    });
+    var roomCode = (params.code || '').toUpperCase();
+    var shipName = params.name || '';
+    if (roomCode) {
+      showJoinModal(roomCode, shipName);
+    }
+  } else {
+    try {
+      var saved = JSON.parse(localStorage.getItem('mp_session'));
+      if (saved && saved.room) {
+        if (saved.role === 'host') {
+          showCreateModal();
+        } else {
+          showJoinModal(saved.room, saved.name || '');
+        }
+      }
+    } catch(e) {}
   }
 
   resetGame();
