@@ -2048,32 +2048,16 @@ let mpModalEl = null;
 let mpIndicatorEl = null;
 
 function buildInviteButton() {
-  const wrap = document.createElement('div');
-  wrap.id = 'mp-invite-wrap';
-  wrap.style.cssText =
-    'position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:150;' +
-    'pointer-events:none;display:flex;align-items:center;gap:10px;';
-
-  const btn = document.createElement('div');
-  btn.id = 'mp-invite-btn';
-  btn.innerText = 'INVITE';
-  btn.style.cssText =
-    'pointer-events:auto;cursor:pointer;padding:8px 28px;' +
-    'font-family:monospace;font-size:13px;letter-spacing:2px;color:#5eff5e;' +
-    'background:rgba(3,12,16,0.7);border:1px solid rgba(94,255,94,0.4);' +
-    'border-radius:6px;transition:all 0.2s;' +
-    '-webkit-user-select:none;user-select:none;touch-action:none;' +
-    '-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;';
+  const btn = document.getElementById('mp-invite-btn');
+  if (!btn) return;
   btn.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     e.stopPropagation();
     Audio.unlock();
     showCreateModal();
-  });
-  btn.onmouseenter = () => { btn.style.borderColor = 'rgba(94,255,94,0.8)'; btn.style.color = '#fff'; };
-  btn.onmouseleave = () => { btn.style.borderColor = 'rgba(94,255,94,0.4)'; btn.style.color = '#5eff5e'; };
-  wrap.appendChild(btn);
-  document.body.appendChild(wrap);
+  }, true);
+  btn.addEventListener('mouseenter', () => { btn.style.borderColor = 'rgba(94,255,94,0.8)'; btn.style.color = '#fff'; });
+  btn.addEventListener('mouseleave', () => { btn.style.borderColor = 'rgba(94,255,94,0.4)'; btn.style.color = '#5eff5e'; });
 }
 
 function updateMpIndicator() {
@@ -2106,7 +2090,7 @@ function showModal(html) {
   const overlay = document.createElement('div');
   overlay.id = 'mp-modal';
   overlay.style.cssText =
-    'position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;' +
+    'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;' +
     'background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);';
   const box = document.createElement('div');
   box.style.cssText =
@@ -2114,9 +2098,9 @@ function showModal(html) {
     'border-radius:12px;padding:24px 32px;min-width:340px;max-width:520px;' +
     'font-family:monospace;color:#eaffff;';
   box.innerHTML = html;
-  box.addEventListener('pointerdown', e => e.stopPropagation());
+  box.addEventListener('pointerdown', e => e.stopPropagation(), true);
   overlay.appendChild(box);
-  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) { e.preventDefault(); e.stopPropagation(); hideModal(); } });
+  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) { e.preventDefault(); e.stopPropagation(); hideModal(); } }, true);
   document.body.appendChild(overlay);
   mpModalEl = overlay;
   return box;
@@ -2129,7 +2113,7 @@ function bindBtn(id, fn) {
   el.style.touchAction = 'none';
   el.style.userSelect = 'none';
   el.style.webkitUserSelect = 'none';
-  el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fn(e); });
+  el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fn(e); }, true);
 }
 
 function hideModal() {

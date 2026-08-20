@@ -37,6 +37,12 @@
   <body>
     <!-- Attachment point for your app -->
     <div id="container"></div>
+
+    <!-- Multiplayer invite button (pre-rendered, before React 360) -->
+    <div id="mp-invite-wrap" style="position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:9999;pointer-events:none;">
+      <div id="mp-invite-btn" style="pointer-events:auto;cursor:pointer;padding:8px 28px;font-family:monospace;font-size:13px;letter-spacing:2px;color:#5eff5e;background:rgba(3,12,16,0.7);border:1px solid rgba(94,255,94,0.4);border-radius:6px;-webkit-user-select:none;user-select:none;touch-action:none;">INVITE</div>
+    </div>
+
     <script src="./client.bundle.js"></script>
     <script>
       // Initialize the React 360 application
