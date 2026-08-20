@@ -55,7 +55,10 @@ const POWERUP_PICKUP_DIST = 5;      // world units
 
 const MATRIX_SHIPS = ['NEBUCHEZZAR','LOGOS','OSIRIS','ICARUS','VIGILANT','NOVALIS','MJOLNIR','DORA','IRONSIDE','WOLFHOUND'];
 const MP_COLORS = [0xaef4f4,0x5eff5e,0xff5eff,0xffa500,0x5e9eff];
-const MP = {role:null,pc:null,dc:null,connected:false,playerName:'',roomCode:'',remotePlayers:{},syncTimer:0,SYNC_RATE:1/15,remoteInput:{name:''}};
+const HEALTH_MAX = 100;
+const ASTEROID_DAMAGE = 30;
+const BULLET_DAMAGE = 35;
+const MP = {role:null,pc:null,dc:null,connected:false,playerName:'',roomCode:'',remotePlayers:{},syncTimer:0,SYNC_RATE:1/15,remoteInput:{name:''},gameMode:'coop'};
 
 // ---------------------------------------------------------------------------
 // Arena shape registry
@@ -519,6 +522,7 @@ const G = {
   status: 'ready',
   score: 0,
   lives: START_LIVES,
+  health: HEALTH_MAX,
   wave: 0,
   theta: 0,
   phi: 0.3,
@@ -683,6 +687,7 @@ function mpCreateRoom(roomName, name) {
     .then(data => {
       if (data.error) throw new Error(data.error);
       MP.roomCode = data.code;
+      history.replaceState(null, '', location.pathname + location.search + '#code=' + data.code);
       showWaitingUI(data.code, name);
       mpPollForAnswer(data.code);
     });
@@ -743,43 +748,141 @@ function sendHostState() {
     n: MP.playerName, θ: G.theta, φ: G.phi, h: G.heading, b: G.bank,
     s: G.score, l: G.lives, v: G.respawnTimer <= 0,
     e: G.respawnTimer <= 0 && engineMesh && engineMesh.visible,
-    sh: G.shieldHits,
+    sh: G.shieldHits, hp: G.health,
   }];
   for (const k in MP.remotePlayers) {
     const r = MP.remotePlayers[k];
     ps.push({
       n: r.name, θ: r.theta, φ: r.phi, h: r.heading, b: r.bank,
       s: r.score || 0, l: r.lives || START_LIVES, v: r.respawnTimer <= 0,
-      e: false, sh: r.shieldHits || 0,
+      e: false, sh: r.shieldHits || 0, hp: r.health || HEALTH_MAX,
     });
   }
   MP.dc.send(JSON.stringify({
     t: 's', ps,
     as: asteroids.map(a => ({θ: a.theta, φ: a.phi, t: a.tier})),
+    bs: bullets.map(b => ({θ: b.theta, φ: b.phi, h: b.heading, o: b.owner})),
+    us: powerups.map(p => ({θ: p.theta, φ: p.phi, t: POWERUP_TYPES.indexOf(p.type)})),
+    eb: (SHAPE.name === 'EINSTEIN' && SHAPE._bodies) ? SHAPE._bodies.map(function(b) { return {a: b.orbitAngle}; }) : null,
     w: G.wave, sh: SHAPE.name, st: G.status,
     mt: {msg: G.msg, timer: G.msgTimer},
+    gm: MP.gameMode,
   }));
 }
 
+function findShapeByName(name) {
+  for (var i = 0; i < SHAPES.length; i++) {
+    if (SHAPES[i].name === name) return SHAPES[i];
+  }
+  return SHAPE;
+}
+
+function syncAsteroids(hostAsteroids) {
+  for (var i = asteroids.length - 1; i >= 0; i--) {
+    scene.remove(asteroids[i].mesh);
+    asteroids.splice(i, 1);
+  }
+  if (!hostAsteroids) return;
+  for (var i = 0; i < hostAsteroids.length; i++) {
+    var ad = hostAsteroids[i];
+    var tier = ad.t;
+    var mesh = makeAsteroidMesh();
+    mesh.scale.setScalar(SIZES[tier]);
+    mesh.material.color.setHex(quadrantColor(ad.θ, ad.φ));
+    surfacePoint(ad.θ, ad.φ, _pos);
+    mesh.position.copy(_pos);
+    var a = { theta: ad.θ, phi: ad.φ, tier: tier, radius: SIZES[tier], mesh: mesh,
+      spinAxis: new THREE.Vector3(0,1,0), spinSpeed: 0.5 };
+    asteroids.push(a);
+    scene.add(mesh);
+  }
+}
+
+function syncPowerups(hostPowerups) {
+  for (var i = powerups.length - 1; i >= 0; i--) {
+    scene.remove(powerups[i].mesh);
+    powerups.splice(i, 1);
+  }
+  if (!hostPowerups) return;
+  for (var i = 0; i < hostPowerups.length; i++) {
+    var pd = hostPowerups[i];
+    var type = POWERUP_TYPES[pd.t];
+    if (!type) continue;
+    var mesh = makePowerupSprite(type);
+    surfacePoint(pd.θ, pd.φ, _pos);
+    mesh.position.copy(_pos);
+    scene.add(mesh);
+    powerups.push({type: type, theta: pd.θ, phi: pd.φ, life: POWERUP_LIFETIME, mesh: mesh});
+  }
+}
+
+var _clientShapeName = '';
+
 function handleClientMessage(msg) {
   if (msg.t === 's') {
-    for (const p of msg.ps) {
+    if (msg.sh && msg.sh !== _clientShapeName) {
+      _clientShapeName = msg.sh;
+      var newShape = findShapeByName(msg.sh);
+      if (newShape && newShape !== SHAPE) {
+        SHAPE = newShape;
+        rebuildArena();
+        _refInit = false;
+      }
+    }
+
+    syncAsteroids(msg.as);
+
+    for (var i = bullets.length - 1; i >= 0; i--) {
+      scene.remove(bullets[i].mesh);
+      bullets.splice(i, 1);
+    }
+    if (msg.bs) {
+      for (var i = 0; i < msg.bs.length; i++) {
+        var bd = msg.bs[i];
+        var b = {
+          theta: bd.θ, phi: bd.φ, heading: bd.h,
+          life: BULLET_LIFE,
+          mesh: new THREE.LineSegments(bulletWire, bulletMat),
+          firework: false,
+          owner: bd.o,
+        };
+        bullets.push(b);
+        scene.add(b.mesh);
+        placeOriented(b.mesh, b);
+      }
+    }
+
+    syncPowerups(msg.us);
+
+    if (msg.eb && SHAPE.name === 'EINSTEIN' && SHAPE._bodies) {
+      for (var i = 0; i < msg.eb.length && i < SHAPE._bodies.length; i++) {
+        SHAPE._bodies[i].orbitAngle = msg.eb[i].a;
+      }
+      if (typeof updateEinsteinMeshPositions === 'function') {
+        updateEinsteinMeshPositions();
+      }
+    }
+
+    for (var i = 0; i < msg.ps.length; i++) {
+      var p = msg.ps[i];
       if (p.n === MP.playerName) {
         G.theta = p.θ; G.phi = p.φ; G.heading = p.h; G.bank = p.b;
-        G.score = p.s; G.lives = p.l; G.shieldHits = p.sh;
+        G.score = p.s; G.lives = p.l; G.shieldHits = p.sh; G.health = p.hp;
         shipMesh.visible = p.v;
         if (engineMesh) engineMesh.visible = p.e;
         if (p.v) placeOriented(shipMesh, G);
       } else {
         ensureRemotePlayer(p);
-        const rp = MP.remotePlayers[p.n];
+        var rp = MP.remotePlayers[p.n];
         rp.theta = p.θ; rp.phi = p.φ; rp.heading = p.h; rp.bank = p.b;
         rp.respawnTimer = p.v ? 0 : 999;
+        rp.health = p.hp;
         rp.mesh.visible = p.v;
         if (p.v) placeOriented(rp.mesh, rp);
       }
     }
     G.wave = msg.w; G.status = msg.st;
+    if (msg.gm) MP.gameMode = msg.gm;
     if (msg.mt && msg.mt.timer > 0) { G.msg = msg.mt.msg; G.msgTimer = msg.mt.timer; }
     updateHudOverlay();
   }
@@ -790,7 +893,9 @@ function ensureRemotePlayer(p) {
   const ci = Object.keys(MP.remotePlayers).length;
   const mesh = makeRemoteShipMesh(ci);
   scene.add(mesh);
-  MP.remotePlayers[p.n] = {name: p.n, theta: p.θ, phi: p.φ, heading: p.h, bank: p.b, score: p.s, lives: p.l, respawnTimer: p.v ? 0 : 999, shieldHits: p.sh || 0, mesh};
+  var hb = makeHealthBar(MP_COLORS[(ci + 1) % MP_COLORS.length]);
+  scene.add(hb);
+  MP.remotePlayers[p.n] = {name: p.n, theta: p.θ, phi: p.φ, heading: p.h, bank: p.b, score: p.s, lives: p.l, health: p.hp || HEALTH_MAX, respawnTimer: p.v ? 0 : 999, shieldHits: p.sh || 0, mesh, healthBar: hb};
 }
 
 function processRemoteInput(dt) {
@@ -801,10 +906,12 @@ function processRemoteInput(dt) {
     const ci = Object.keys(MP.remotePlayers).length;
     const mesh = makeRemoteShipMesh(ci);
     scene.add(mesh);
+    var hb = makeHealthBar(MP_COLORS[(ci + 1) % MP_COLORS.length]);
+    scene.add(hb);
     MP.remotePlayers[name] = {
       name, theta: 0, phi: 0.3, vTheta: 0, vPhi: 0, heading: 0.6, bank: 0,
-      targetBank: 0, score: 0, lives: START_LIVES, respawnTimer: 0,
-      invuln: INVULN_TIME, shieldHits: 0, mesh,
+      targetBank: 0, score: 0, lives: START_LIVES, health: HEALTH_MAX, respawnTimer: 0,
+      invuln: INVULN_TIME, shieldHits: 0, mesh, fireCd: 0, healthBar: hb,
     };
   }
   const rp = MP.remotePlayers[name];
@@ -837,6 +944,11 @@ function processRemoteInput(dt) {
   const blink = rp.invuln > 0 && Math.floor(rp.invuln * 8) % 2 === 0;
   rp.mesh.visible = !blink;
   placeOriented(rp.mesh, rp);
+  rp.fireCd -= dt;
+  if (inp.f && rp.fireCd <= 0) {
+    fireBulletFrom(rp);
+    rp.fireCd = FIRE_COOLDOWN;
+  }
 }
 
 function sendClientInput() {
@@ -1164,6 +1276,7 @@ function resetGame() {
   G.status = 'playing';
   G.score = 0;
   G.lives = START_LIVES;
+  G.health = HEALTH_MAX;
   G.wave = 0;
   G.vTheta = 0;
   G.vPhi = 0;
@@ -1276,10 +1389,96 @@ function fireBullet() {
         ? new THREE.LineBasicMaterial({color: 0xff5e5e, transparent: true, opacity: 1})
         : bulletMat),
       firework: isFirework,
+      owner: MP.playerName,
     };
     bullets.push(b);
     scene.add(b.mesh);
     placeOriented(b.mesh, b);
+  }
+}
+
+function fireBulletFrom(rp) {
+  const b = {
+    theta: rp.theta + Math.sin(rp.heading) * 0.05,
+    phi: rp.phi + Math.cos(rp.heading) * 0.05,
+    heading: rp.heading,
+    life: BULLET_LIFE,
+    mesh: new THREE.LineSegments(bulletWire, bulletMat),
+    firework: false,
+    owner: rp.name,
+  };
+  bullets.push(b);
+  scene.add(b.mesh);
+  placeOriented(b.mesh, b);
+}
+
+const BAR_W = 3.0;
+const BAR_H = 0.25;
+const BAR_D = 0.15;
+const BAR_OFFSET = 5.5;
+
+function makeHealthBar(color) {
+  const group = new THREE.Group();
+  const bgGeo = new THREE.BoxGeometry(BAR_W, BAR_H, BAR_D);
+  const bgMat = new THREE.MeshBasicMaterial({color: 0x112233, transparent: true, opacity: 0.6});
+  const bg = new THREE.Mesh(bgGeo, bgMat);
+  group.add(bg);
+  const fillGeo = new THREE.BoxGeometry(BAR_W, BAR_H, BAR_D);
+  const fillMat = new THREE.MeshBasicMaterial({color: color, transparent: true, opacity: 0.9});
+  const fill = new THREE.Mesh(fillGeo, fillMat);
+  fill.position.x = 0;
+  group.add(fill);
+  group._fill = fill;
+  group._fillMat = fillMat;
+  return group;
+}
+
+function positionHealthBar(bar, theta, phi) {
+  surfacePoint(theta, phi, _pos);
+  tangentFrame(theta, phi);
+  _pos.addScaledVector(_n, BAR_OFFSET);
+  bar.position.copy(_pos);
+  bar.quaternion.setFromUnitVectors(_Z, _n);
+}
+
+function updateHealthBar(bar, health) {
+  var pct = Math.max(0, Math.min(1, (health || 0) / HEALTH_MAX));
+  bar._fill.scale.x = Math.max(0.001, pct);
+  bar._fill.position.x = -BAR_W * (1 - pct) * 0.5;
+  if (pct > 0.6) bar._fillMat.color.setHex(0x5eff5e);
+  else if (pct > 0.3) bar._fillMat.color.setHex(0xffe45e);
+  else bar._fillMat.color.setHex(0xff5e5e);
+  bar.visible = pct < 1;
+}
+
+var hostHealthBar;
+function createHostHealthBar() {
+  hostHealthBar = makeHealthBar(0x5eff5e);
+  scene.add(hostHealthBar);
+}
+
+function updateHealthBars() {
+  if (MP.role) {
+    var shipAlive = G.respawnTimer <= 0;
+    if (hostHealthBar) {
+      if (shipAlive) {
+        positionHealthBar(hostHealthBar, G.theta, G.phi);
+        updateHealthBar(hostHealthBar, G.health);
+      } else {
+        hostHealthBar.visible = false;
+      }
+    }
+  }
+  for (var k in MP.remotePlayers) {
+    var rp = MP.remotePlayers[k];
+    if (rp.healthBar) {
+      if (rp.respawnTimer <= 0 && rp.mesh.visible) {
+        positionHealthBar(rp.healthBar, rp.theta, rp.phi);
+        updateHealthBar(rp.healthBar, rp.health);
+      } else {
+        rp.healthBar.visible = false;
+      }
+    }
   }
 }
 
@@ -1347,9 +1546,9 @@ function hitAsteroid(bullet, asteroid) {
   }
 }
 
-function killShip(hitAsteroid) {
+function damageShip(amount, hitAsteroid) {
   if (G.invuln > 0) { return; }
-    if (G.shieldHits > 0) {
+  if (G.shieldHits > 0) {
     G.shieldHits--;
     Audio.explode();
     spawnRing(G.theta, G.phi, 0x5e9eff, {life: 0.5, grow: 30});
@@ -1364,6 +1563,24 @@ function killShip(hitAsteroid) {
     }
     return;
   }
+  G.health -= amount;
+  spawnRing(G.theta, G.phi, 0xff5e5e, {life: 0.3, grow: 20});
+  if (hitAsteroid) {
+    spawnRing(hitAsteroid.theta, hitAsteroid.phi, 0x9ff2ff, {life: 0.35, grow: 22});
+    removeAsteroid(hitAsteroid);
+    if (asteroids.length === 0 && G.status === 'playing') {
+      const nextIdx2 = G.wave % SHAPES.length;
+      setMsg('WAVE CLEAR  \u2192  ' + SHAPES[nextIdx2].name, 2.2);
+      G.startTimer = 2.3;
+    }
+  }
+  if (G.health <= 0) {
+    G.health = HEALTH_MAX;
+    killShip();
+  }
+}
+
+function killShip() {
   Audio.die();
   spawnRing(G.theta, G.phi, 0xff6b6b, {life: 0.6, grow: 34});
   shipMesh.visible = false;
@@ -1600,8 +1817,72 @@ function handleCollisions() {
       surfacePoint(a.theta, a.phi, _tmp2);
       const rr = a.radius + (G.shieldHits > 0 ? SHIP_RADIUS * 3 : SHIP_RADIUS);
       if (_tmp.distanceToSquared(_tmp2) < rr * rr) {
-        killShip(a);
+        damageShip(ASTEROID_DAMAGE, a);
         break;
+      }
+    }
+  }
+
+  for (const k in MP.remotePlayers) {
+    const rp = MP.remotePlayers[k];
+    if (rp.respawnTimer > 0 || rp.invuln > 0) continue;
+    surfacePoint(rp.theta, rp.phi, _tmp);
+    for (const a of asteroids) {
+      surfacePoint(a.theta, a.phi, _tmp2);
+      const rr = a.radius + SHIP_RADIUS;
+      if (_tmp.distanceToSquared(_tmp2) < rr * rr) {
+        rp.health = (rp.health || HEALTH_MAX) - ASTEROID_DAMAGE;
+        spawnRing(rp.theta, rp.phi, 0xff5e5e, {life: 0.3, grow: 20});
+        removeAsteroid(a);
+        if (rp.health <= 0) {
+          rp.health = HEALTH_MAX;
+          rp.respawnTimer = 3;
+          rp.mesh.visible = false;
+          rp.vTheta = 0; rp.vPhi = 0;
+          rp.lives -= 1;
+          spawnRing(rp.theta, rp.phi, 0xff6b6b, {life: 0.5, grow: 30});
+        }
+        break;
+      }
+    }
+  }
+
+  if (MP.gameMode === 'versus') {
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      if (!b.owner) continue;
+      surfacePoint(b.theta, b.phi, _tmp);
+
+      if (b.owner !== MP.playerName && G.respawnTimer <= 0 && G.invuln <= 0) {
+        surfacePoint(G.theta, G.phi, _tmp2);
+        if (_tmp.distanceToSquared(_tmp2) < SHIP_RADIUS * SHIP_RADIUS) {
+          scene.remove(b.mesh);
+          bullets.splice(i, 1);
+          damageShip(BULLET_DAMAGE);
+          continue;
+        }
+      }
+
+      for (const k in MP.remotePlayers) {
+        const rp = MP.remotePlayers[k];
+        if (b.owner === k || rp.respawnTimer > 0 || rp.invuln > 0) continue;
+        surfacePoint(rp.theta, rp.phi, _tmp2);
+        if (_tmp.distanceToSquared(_tmp2) < SHIP_RADIUS * SHIP_RADIUS) {
+          scene.remove(b.mesh);
+          bullets.splice(i, 1);
+          rp.health = (rp.health || HEALTH_MAX) - BULLET_DAMAGE;
+          spawnRing(rp.theta, rp.phi, 0xff5e5e, {life: 0.3, grow: 20});
+          Audio.explode();
+          if (rp.health <= 0) {
+            rp.health = HEALTH_MAX;
+            rp.respawnTimer = 3;
+            rp.mesh.visible = false;
+            rp.vTheta = 0; rp.vPhi = 0;
+            rp.lives -= 1;
+            spawnRing(rp.theta, rp.phi, 0xff6b6b, {life: 0.5, grow: 30});
+          }
+          break;
+        }
       }
     }
   }
@@ -1669,10 +1950,6 @@ function update(dt) {
       G.phi += G.vPhi * dt;
       wrapBody(G);
       G.fireCd -= dt;
-      if (keys[' '] && G.fireCd <= 0) {
-        fireBullet();
-        G.fireCd = G.rapidTimer > 0 ? FIRE_COOLDOWN / 3 : FIRE_COOLDOWN;
-      }
       placeOriented(shipMesh, G);
       engineMesh.visible = !!up;
       const blink = G.invuln > 0 && Math.floor(G.invuln * 8) % 2 === 0;
@@ -1680,6 +1957,7 @@ function update(dt) {
     } else {
       shipMesh.visible = false;
     }
+    updateHealthBars();
     updateHudOverlay();
     return;
   }
@@ -1784,6 +2062,7 @@ function update(dt) {
   updatePowerups(dt);
   updateFx(dt);
   updateHudOverlay();
+  updateHealthBars();
 
   if (MP.role === 'host') {
     MP.syncTimer += dt;
@@ -2151,11 +2430,15 @@ function buildInviteButton() {
 function updateMpIndicator() {
   if (!mpIndicatorEl) return;
   if (MP.connected) {
-    mpIndicatorEl.textContent = (MP.role === 'host' ? 'HOST' : 'CONNECTED') + (MP.roomCode ? ' \u00B7 ' + MP.roomCode : '');
-    mpIndicatorEl.style.color = '#5eff5e';
+    var modeLabel = MP.gameMode === 'versus' ? 'VERSUS' : 'COOP';
+    var modeColor = MP.gameMode === 'versus' ? '#ff5e5e' : '#5eff5e';
+    mpIndicatorEl.textContent = (MP.role === 'host' ? 'HOST' : 'CONNECTED') + (MP.roomCode ? ' \u00B7 ' + MP.roomCode : '') + ' \u00B7 ' + modeLabel;
+    mpIndicatorEl.style.color = modeColor;
+    mpIndicatorEl.style.cursor = MP.role === 'host' ? 'pointer' : 'default';
   } else if (MP.role) {
     mpIndicatorEl.textContent = 'CONNECTING...' + (MP.roomCode ? ' \u00B7 ' + MP.roomCode : '');
     mpIndicatorEl.style.color = '#ffe45e';
+    mpIndicatorEl.style.cursor = 'default';
   } else {
     mpIndicatorEl.textContent = '';
   }
@@ -2168,9 +2451,16 @@ function buildMpIndicator() {
     'position:fixed;top:6px;right:12px;z-index:120;' +
     'font-family:monospace;font-size:11px;letter-spacing:1px;color:#5eff5e;' +
     'background:rgba(3,12,16,0.55);border:1px solid rgba(46,107,122,0.5);' +
-    'border-radius:6px;padding:3px 10px;white-space:nowrap;pointer-events:none;';
+    'border-radius:6px;padding:3px 10px;white-space:nowrap;';
   document.body.appendChild(el);
   mpIndicatorEl = el;
+  el.addEventListener('pointerdown', function(e) {
+    e.stopPropagation();
+    if (MP.role === 'host' && MP.connected) {
+      MP.gameMode = MP.gameMode === 'coop' ? 'versus' : 'coop';
+      updateMpIndicator();
+    }
+  }, true);
 }
 
 function showModal(html) {
@@ -2466,6 +2756,7 @@ function init(bundle, parent, options = {}) {
 
   shipMesh = buildShip();
   scene.add(shipMesh);
+  createHostHealthBar();
 
   computeCamera();
   _smoothCam.copy(_camPosV);
